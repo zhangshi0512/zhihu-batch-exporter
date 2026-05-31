@@ -1,0 +1,25 @@
+# === Dependencies ===
+node_modules/
+
+# === Environment variables (contains secrets) ===
+.env
+.env.local
+
+# === Exported answer files (user-generated content) ===
+output/answers/
+
+# === Generated dashboard (contains personal data) ===
+dashboard.html
+
+# === Cookie files ===
+cookie.txt
+
+# === Saved HTML / intermediate files ===
+zhihu.html
+Answer_List_Detail.txt
+
+# === Lock file (generated) ===
+package-lock.json
+
+# === IDE files ===
+*.txt

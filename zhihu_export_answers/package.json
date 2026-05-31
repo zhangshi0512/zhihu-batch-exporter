@@ -1,0 +1,17 @@
+{
+  "name": "zhihu-export-answers",
+  "version": "1.0.0",
+  "description": "Batch export Zhihu answers to Markdown files",
+  "main": "export.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node export.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "node-html-parser": "^6.1.13",
+    "turndown": "^7.2.0",
+    "turndown-plugin-gfm": "^1.0.2",
+    "fs-extra": "^11.2.0"
+  }
+}
