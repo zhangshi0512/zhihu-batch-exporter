@@ -17,9 +17,18 @@ const path = require('path');
 const fse = require('fs-extra');
 const config = require('./config');
 
-// Resolve output directory relative to this file
+// Resolve default output directory relative to this file.
 const OUTPUT_DIR = path.resolve(__dirname, config.outputDir);
-const PROGRESS_FILE = path.join(OUTPUT_DIR, 'progress.json');
+
+function resolveOutputDir(outputDir = OUTPUT_DIR) {
+  return path.isAbsolute(outputDir)
+    ? outputDir
+    : path.resolve(__dirname, outputDir);
+}
+
+function progressFileFor(outputDir) {
+  return path.join(resolveOutputDir(outputDir), 'progress.json');
+}
 
 // ── Front matter ──────────────────────────────────────────────────────────────
 
@@ -81,11 +90,13 @@ function buildFilename(data) {
 
 // ── Progress tracking ─────────────────────────────────────────────────────────
 
-async function loadProgress() {
+async function loadProgress(outputDir = OUTPUT_DIR) {
+  const resolvedOutputDir = resolveOutputDir(outputDir);
+  const progressFile = progressFileFor(resolvedOutputDir);
   try {
-    await fse.ensureDir(OUTPUT_DIR);
-    if (await fse.pathExists(PROGRESS_FILE)) {
-      return await fse.readJson(PROGRESS_FILE);
+    await fse.ensureDir(resolvedOutputDir);
+    if (await fse.pathExists(progressFile)) {
+      return await fse.readJson(progressFile);
     }
   } catch {
     // ignore
@@ -93,8 +104,9 @@ async function loadProgress() {
   return { exported: [], failed: [] };
 }
 
-async function saveProgress(progress) {
-  await fse.writeJson(PROGRESS_FILE, progress, { spaces: 2 });
+async function saveProgress(progress, outputDir = OUTPUT_DIR) {
+  await fse.ensureDir(resolveOutputDir(outputDir));
+  await fse.writeJson(progressFileFor(outputDir), progress, { spaces: 2 });
 }
 
 // ── Main write function ───────────────────────────────────────────────────────
@@ -106,11 +118,12 @@ async function saveProgress(progress) {
  * @param {string} markdownBody - Converted markdown from converter.js
  * @returns {string} The filename that was written
  */
-async function writeAnswer(data, markdownBody) {
-  await fse.ensureDir(OUTPUT_DIR);
+async function writeAnswer(data, markdownBody, outputDir = OUTPUT_DIR) {
+  const resolvedOutputDir = resolveOutputDir(outputDir);
+  await fse.ensureDir(resolvedOutputDir);
 
   const filename = buildFilename(data);
-  const filePath = path.join(OUTPUT_DIR, filename);
+  const filePath = path.join(resolvedOutputDir, filename);
 
   let content = '';
   if (config.includeFrontMatter) {
@@ -125,10 +138,22 @@ async function writeAnswer(data, markdownBody) {
   return filename;
 }
 
+function createWriter(outputDir = OUTPUT_DIR) {
+  const resolvedOutputDir = resolveOutputDir(outputDir);
+  return {
+    outputDir: resolvedOutputDir,
+    progressFile: progressFileFor(resolvedOutputDir),
+    loadProgress: () => loadProgress(resolvedOutputDir),
+    saveProgress: (progress) => saveProgress(progress, resolvedOutputDir),
+    writeAnswer: (data, markdownBody) => writeAnswer(data, markdownBody, resolvedOutputDir),
+  };
+}
+
 module.exports = {
   loadProgress,
   saveProgress,
   writeAnswer,
   buildFilename,
+  createWriter,
   OUTPUT_DIR,
 };

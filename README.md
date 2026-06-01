@@ -24,6 +24,43 @@ A two-phase toolkit for scraping all answer URLs from a Zhihu user's profile and
 
 ---
 
+## Chrome Extension Side Panel / Chrome 扩展侧边栏
+
+This project now includes an optional Chrome MV3 extension in `chrome_extension/`.
+It replaces the manual console-copy workflow with Chrome's built-in side panel:
+
+- Collect answer URLs from the active Zhihu `/people/...` profile tab.
+- Display each collected answer with a question title and short answer preview.
+- Fill missing answer previews on demand when Zhihu's profile API omits snippets.
+- Cache collected URLs per user slug and merge newly collected URLs on later refreshes.
+- Read the current Zhihu cookie through Chrome's `cookies` permission.
+- Select all, select none, or uncheck individual answer URLs before export.
+- Clear the cached URL list when you want to start over.
+- Show progress bars while collecting URLs and exporting selected answers.
+- Export selected answers as one Markdown `.zip` file through Chrome's download flow.
+
+No localhost service, Native Messaging host, installer, or PowerShell setup command is required for the extension ZIP workflow.
+
+### Load the extension
+
+1. Open `chrome://extensions`.
+2. Enable **Developer mode**.
+3. Click **Load unpacked**.
+4. Select the `chrome_extension/` folder.
+5. Open a Zhihu profile answers page, for example `https://www.zhihu.com/people/YOUR_USERNAME/answers`.
+6. Click the extension icon to open the side panel.
+
+### Extension workflow
+
+1. Click **Collect / Refresh URLs**. Cached URLs are kept and newly discovered URLs are added with question titles and answer snippets when Zhihu returns them.
+2. If many rows still lack snippets, click **Fill previews**. This fetches missing previews by answer ID and updates the cache.
+3. Use **Select all**, **Select none**, or individual checkboxes to choose the export set. Use **Clear cache** when you want to start over.
+4. Click **Download ZIP**. The side panel fetches selected answers, converts them to Markdown, packages them into one ZIP, and asks Chrome to download it. Chrome may show a save dialog depending on browser settings.
+
+Note: Zhihu's profile answer count can be higher than the number returned by `/api/v4/members/{slug}/answers`. Deleted, hidden, anonymous, private, or otherwise unavailable answers may be included in the account-level count but not returned as exportable profile answer URLs.
+
+---
+
 ## Phase 1 — Collect Answer URLs / 第一步 — 采集回答链接
 
 This step collects every answer URL from a Zhihu user's public profile using the browser console. No extensions or installs needed.
@@ -279,6 +316,13 @@ zhihu-batch-exporter/
 ├── answer_urls.txt                    ← Phase 1 output / Phase 2 input / 第一步输出，第二步输入
 ├── generate_dashboard.js              ← Phase 3: generates dashboard.html / 第三步：生成热力图
 ├── dashboard.html                     ← (git-ignored: your personal data) / 个人数据，不上传
+│
+├── chrome_extension/                  ← Chrome MV3 side panel extension / Chrome 侧边栏扩展
+│   ├── manifest.json
+│   ├── background.js                  ← side panel behavior + cookie access / 侧边栏与 Cookie 访问
+│   ├── side_panel.html
+│   ├── side_panel.css
+│   └── side_panel.js                  ← URL cache, selection, ZIP export / 链接缓存、选择、ZIP 导出
 │
 ├── zhihu_scrape_answers.js            ← Phase 1: Chrome console script / 第一步：浏览器控制台脚本
 │

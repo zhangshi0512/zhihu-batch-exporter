@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "知乎回答批量导出",
+  "version": "0.1.0",
+  "description": "从知乎个人主页采集回答链接，并将选中的回答导出为 Markdown ZIP 文件。",
+  "action": {
+    "default_title": "知乎回答批量导出"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "side_panel.html"
+  },
+  "permissions": [
+    "cookies",
+    "downloads",
+    "sidePanel",
+    "scripting",
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://www.zhihu.com/*",
+    "https://*.zhihu.com/*"
+  ]
+}

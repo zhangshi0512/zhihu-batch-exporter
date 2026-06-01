@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>知乎回答批量导出</title>
+    <link rel="stylesheet" href="side_panel.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <h1>知乎导出</h1>
+          <p id="activeTabText">正在检查当前标签页...</p>
+        </div>
+        <button id="refreshButton" class="icon-button" title="刷新状态" aria-label="刷新状态">刷</button>
+      </header>
+
+      <section class="status-grid">
+        <div>
+          <span class="label">导出</span>
+          <strong id="serviceStatus">未知</strong>
+        </div>
+        <div>
+          <span class="label">登录状态</span>
+          <strong id="cookieStatus">未知</strong>
+        </div>
+        <div>
+          <span class="label">缓存</span>
+          <strong id="cacheStatus">0 条</strong>
+        </div>
+      </section>
+
+      <section class="controls">
+        <div class="button-row">
+          <button id="collectButton" class="primary">采集 / 刷新链接</button>
+          <button id="hydrateButton" type="button">补全预览</button>
+        </div>
+        <div class="progress-block" id="collectProgressBlock">
+          <div class="progress-header">
+            <span id="collectProgressLabel">链接采集</span>
+            <strong id="collectProgressText">空闲</strong>
+          </div>
+          <div class="progress-track" role="progressbar" aria-label="链接采集进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <div id="collectProgressFill" class="progress-fill"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="selection-bar">
+        <div>
+          <strong id="selectedCount">已选择 0 条</strong>
+          <span id="lastCollectedText"></span>
+        </div>
+        <div class="button-row">
+          <button id="selectAllButton">全选</button>
+          <button id="selectNoneButton">全不选</button>
+          <button id="clearCacheButton">清空缓存</button>
+        </div>
+      </section>
+
+      <section class="url-list" id="urlList" aria-label="回答链接列表"></section>
+
+      <footer class="footer">
+        <button id="exportButton" class="primary">下载 ZIP</button>
+        <button id="cancelButton">取消</button>
+      </footer>
+
+      <section class="job-panel">
+        <div class="job-header">
+          <strong id="jobStatus">当前没有导出任务</strong>
+          <span id="jobCounts"></span>
+        </div>
+        <div class="progress-block export-progress">
+          <div class="progress-header">
+            <span id="exportProgressLabel">导出进度</span>
+            <strong id="exportProgressText">空闲</strong>
+          </div>
+          <div class="progress-track" role="progressbar" aria-label="导出进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <div id="exportProgressFill" class="progress-fill"></div>
+          </div>
+        </div>
+        <pre id="jobLog"></pre>
+      </section>
+    </main>
+    <script src="side_panel.js"></script>
+  </body>
+</html>
