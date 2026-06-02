@@ -1,5 +1,201 @@
 'use strict';
 
+// ============================
+// Content type configuration
+// ============================
+const CONTENT_TYPES = {
+  answers: {
+    label: '回答',
+    labelEn: 'answers',
+    folderName: 'answers',
+    frontmatterType: 'zhihu-answer',
+    domSelectors: { content: '.RichContent-inner', title: '.QuestionHeader-title', author: '.AuthorInfo-name .UserLink-link, .AuthorInfo-name a, [itemprop="author"] [itemprop="name"]' },
+    hasTitle: true,
+    supportsTruncated: true,
+    // API
+    apiEndpoint: (slug) => `/api/v4/members/${encodeURIComponent(slug)}/answers`,
+    apiInclude: ['data[*].id', 'data[*].url', 'data[*].question.id', 'data[*].question.title', 'data[*].question.url', 'data[*].excerpt', 'data[*].excerpt_new', 'data[*].summary', 'data[*].content'],
+    apiSortBy: 'created',
+    // DOM sniffing on profile page
+    domLinkSelector: 'a[href*="/question/"][href*="/answer/"]',
+    domLinkNormalizer: (href) => {
+      try {
+        const parsed = new URL(href, window.location.origin);
+        const m = parsed.pathname.match(/\/question\/(\d+)\/answer\/(\d+)/);
+        return m ? `https://www.zhihu.com/question/${m[1]}/answer/${m[2]}` : '';
+      } catch { return ''; }
+    },
+    domSnippetSelector: '.RichContent-inner, .RichText, .ContentItem-excerpt',
+    // API item → normalized item
+    apiItemToUrl: (item) => {
+      const qid = item?.question?.id || String(item?.question?.url || '').match(/questions\/(\d+)/)?.[1] || String(item?.url || '').match(/questions\/(\d+)/)?.[1];
+      const aid = item?.id || String(item?.url || '').match(/answers\/(\d+)/)?.[1];
+      return (qid && aid) ? `https://www.zhihu.com/question/${qid}/answer/${aid}` : '';
+    },
+    apiItemToTitle: (item) => item?.question?.title || '',
+    apiItemToSnippet: (item) => item?.excerpt || item?.excerpt_new || item?.summary || item?.content || '',
+    // URL filter for cached items
+    urlFilter: (url) => url.startsWith('https://www.zhihu.com/question/'),
+    // Content extraction
+    initialDataEntity: 'answers',
+    initialDataIdFromUrl: (url) => { const m = url.match(/\/answer\/(\d+)/); return m ? m[1] : ''; },
+    initialDataTitle: (data) => data?.question?.title || '',
+    initialDataContent: (data) => data?.content || '',
+    initialDataAuthor: (data) => data?.author?.name || '知乎用户',
+    initialDataCreated: (data) => data?.created_time || null,
+    initialDataUpdated: (data) => data?.updated_time || null,
+    initialDataSupplementHtml: () => '',
+    // Hydrate API
+    hydrateApiUrl: (id) => `/api/v4/answers/${id}?include=` + encodeURIComponent(['content', 'excerpt', 'excerpt_new', 'summary', 'question.title'].join(',')),
+    hydrateParseResponse: (data) => ({ title: data.question?.title || '', snippet: data.excerpt || data.excerpt_new || data.summary || data.content || '' }),
+    hydrateDomSelectors: { title: '.QuestionHeader-title', content: '.RichContent-inner, .RichText' },
+    // Profile path
+    profilePath: (slug) => `/people/${slug}/answers`,
+    // Default fallback filename part
+    defaultName: '回答',
+  },
+  articles: {
+    label: '文章',
+    labelEn: 'articles',
+    folderName: 'articles',
+    frontmatterType: 'zhihu-article',
+    domSelectors: { content: '.Post-RichText', title: '.Post-Title', author: '.AuthorInfo-name .UserLink-link, .AuthorInfo-name a, [itemprop="author"] [itemprop="name"]' },
+    hasTitle: true,
+    supportsTruncated: true,
+    apiEndpoint: (slug) => `/api/v4/members/${encodeURIComponent(slug)}/posts`,
+    // Omit include for posts — the include param may not be supported on this endpoint
+    apiInclude: null,
+    apiSortBy: 'created',
+    domLinkSelector: 'a[href*="zhuanlan.zhihu.com/p/"], a[href*="/p/"]',
+    domLinkNormalizer: (href) => {
+      try {
+        const parsed = new URL(href, window.location.origin);
+        const m = parsed.pathname.match(/\/p\/(\d+)/);
+        return m ? `https://zhuanlan.zhihu.com/p/${m[1]}` : '';
+      } catch { return ''; }
+    },
+    domSnippetSelector: '.Post-RichText, .RichText, .PostIndex-content, .Post-Main .RichText',
+    // Use item.url if available; fall back to constructing from item.id
+    apiItemToUrl: (item) => {
+      if (item?.url && String(item.url).startsWith('http')) return String(item.url).replace(/^http:\/\//, 'https://');
+      if (item?.url && String(item.url).startsWith('//')) return `https:${item.url}`;
+      const id = item?.id;
+      return id ? `https://zhuanlan.zhihu.com/p/${id}` : '';
+    },
+    apiItemToTitle: (item) => item?.title || '',
+    apiItemToSnippet: (item) => item?.excerpt || item?.content || '',
+    apiItemToExtraFields: () => ({}),
+    urlFilter: (url) => url.startsWith('https://zhuanlan.zhihu.com/p/'),
+    initialDataEntity: 'articles',
+    initialDataIdFromUrl: (url) => { const m = url.match(/zhuanlan\.zhihu\.com\/p\/(\d+)/); return m ? m[1] : ''; },
+    initialDataTitle: (data) => data?.title || '',
+    initialDataContent: (data) => data?.content || '',
+    initialDataAuthor: (data) => data?.author?.name || '知乎用户',
+    initialDataCreated: (data) => data?.created || null,
+    initialDataUpdated: (data) => data?.updated || null,
+    initialDataSupplementHtml: () => '',
+    hydrateApiUrl: () => null,
+    hydrateParseResponse: () => null,
+    hydrateDomSelectors: { title: '.Post-Title', content: '.Post-RichText, .RichText' },
+    profilePath: (slug) => `/people/${slug}/posts`,
+    defaultName: '文章',
+  },
+  pins: {
+    label: '想法',
+    labelEn: 'pins',
+    folderName: 'pins',
+    frontmatterType: 'zhihu-pin',
+    domSelectors: { content: '.PinItem-contentWrapper', title: null, author: null },
+    hasTitle: false,
+    supportsTruncated: false,
+    apiEndpoint: (slug) => `/api/v4/members/${encodeURIComponent(slug)}/pins`,
+    // Omit include for pins — the include param may not be supported on this endpoint
+    apiInclude: null,
+    apiSortBy: 'created',
+    domLinkSelector: 'a[href*="/pin/"]',
+    domLinkNormalizer: (href) => {
+      try {
+        const parsed = new URL(href, window.location.origin);
+        const m = parsed.pathname.match(/\/pin\/(\d+)/);
+        return m ? `https://www.zhihu.com/pin/${m[1]}` : '';
+      } catch { return ''; }
+    },
+    domSnippetSelector: '.PinItem-contentWrapper, .PinItem-content, .RichText',
+    apiItemToUrl: (item) => {
+      if (item?.url && String(item.url).startsWith('http')) return String(item.url).replace(/^http:\/\//, 'https://');
+      if (item?.url && String(item.url).startsWith('//')) return `https:${item.url}`;
+      const id = item?.id;
+      return id ? `https://www.zhihu.com/pin/${id}` : '';
+    },
+    apiItemToTitle: (item) => `想法${item?.id || ''}`,
+    apiItemToSnippet: (item) => {
+      const textContent = typeof item?.contentHtml === 'string' ? item.contentHtml.replace(/<[^>]*>/g, '').trim()
+        : (typeof item?.content === 'string' ? item.content.replace(/<[^>]*>/g, '').trim()
+        : (item?.excerpt || ''));
+      return textContent.slice(0, 260);
+    },
+    // Pins: store full contentHtml + author during collection since there is no standalone pin page
+    apiItemToExtraFields: (item) => {
+      let fullHtml = typeof item?.contentHtml === 'string' ? item.contentHtml : '';
+      if (!fullHtml && typeof item?.content === 'string') fullHtml = item.content;
+      if (Array.isArray(item?.content)) {
+        const textHtml = item.content
+          .filter(e => e?.type === 'text' && e?.content)
+          .map(e => `<p>${String(e.content).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</p>`)
+          .join('\n');
+        const imgsHtml = item.content
+          .filter(e => e?.type === 'image' && e?.originalUrl)
+          .map(e => `<img src="${e.originalUrl}" />`)
+          .join('\n');
+        const blocksHtml = [textHtml, imgsHtml].filter(Boolean).join('\n');
+        if (blocksHtml) fullHtml += (fullHtml ? '\n' : '') + blocksHtml;
+      }
+      return {
+        contentHtml: fullHtml,
+        author: item?.author?.name || '知乎用户',
+        createdTime: item?.created || null,
+        updatedTime: item?.updated || null,
+      };
+    },
+    urlFilter: (url) => url.startsWith('https://www.zhihu.com/pin/'),
+    initialDataEntity: 'pins',
+    initialDataIdFromUrl: (url) => { const m = url.match(/\/pin\/(\d+)/); return m ? m[1] : ''; },
+    initialDataTitle: () => null,
+    initialDataContent: (data) => {
+      let html = typeof data?.contentHtml === 'string' ? data.contentHtml : '';
+      if (Array.isArray(data?.content)) {
+        const textHtml = data.content
+          .filter(e => e?.type === 'text' && e?.content)
+          .map(e => `<p>${String(e.content).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</p>`)
+          .join('\n');
+        const imgsHtml = data.content
+          .filter(e => e?.type === 'image' && e?.originalUrl)
+          .map(e => `<img src="${e.originalUrl}" />`)
+          .join('\n');
+        const blocksHtml = [textHtml, imgsHtml].filter(Boolean).join('\n');
+        if (blocksHtml) html += (html ? '\n' : '') + blocksHtml;
+      }
+      return html;
+    },
+    initialDataAuthor: (data, initialData) => {
+      const users = initialData?.initialState?.entities?.users || {};
+      for (const key in users) { if (users[key]?.name) return users[key].name; }
+      return '知乎用户';
+    },
+    initialDataCreated: (data) => data?.created || null,
+    initialDataUpdated: (data) => data?.updated || null,
+    initialDataSupplementHtml: (data) => '',
+    hydrateApiUrl: () => null,
+    hydrateParseResponse: () => null,
+    hydrateDomSelectors: { title: null, content: '.PinItem-contentWrapper, .RichText' },
+    profilePath: (slug) => `/people/${slug}/pins`,
+    defaultName: '想法',
+  },
+};
+
+// ============================
+// DOM element references
+// ============================
 const els = {
   activeTabText: document.getElementById('activeTabText'),
   refreshButton: document.getElementById('refreshButton'),
@@ -23,11 +219,16 @@ const els = {
   exportProgressText: document.getElementById('exportProgressText'),
   exportProgressFill: document.getElementById('exportProgressFill'),
   jobLog: document.getElementById('jobLog'),
+  typeSelector: document.getElementById('typeSelector'),
 };
 
+// ============================
+// Application state
+// ============================
 const state = {
   tab: null,
   slug: '',
+  currentType: 'answers',
   items: [],
   urls: [],
   selected: new Set(),
@@ -37,22 +238,37 @@ const state = {
   exportAbortController: null,
 };
 
+// ============================
+// Config helper
+// ============================
+function currentConfig() {
+  return CONTENT_TYPES[state.currentType] || CONTENT_TYPES.answers;
+}
+
+function typeLabel() {
+  return currentConfig().label;
+}
+
+// ============================
+// Storage helpers
+// ============================
 function storageGet(keys) {
   return chrome.storage.local.get(keys);
 }
-
 function storageSet(values) {
   return chrome.storage.local.set(values);
 }
-
 function storageRemove(keys) {
   return chrome.storage.local.remove(keys);
 }
 
 function cacheKey(slug) {
-  return `zhihuProfile:${slug}`;
+  return `zhihuProfile:${slug}:${state.currentType}`;
 }
 
+// ============================
+// UI helpers
+// ============================
 function setStatus(el, text, ok) {
   el.textContent = text;
   el.classList.toggle('ok', ok === true);
@@ -73,7 +289,6 @@ function cleanText(value, maxLength = 220) {
     .replace(/&gt;/g, '>')
     .replace(/\s+/g, ' ')
     .trim();
-
   if (text.length <= maxLength) return text;
   return `${text.slice(0, maxLength - 1).trim()}...`;
 }
@@ -90,42 +305,6 @@ function itemUrls(items) {
   return items.map((item) => item.url).filter(Boolean);
 }
 
-function normalizeAnswerItems(rawItems) {
-  return (rawItems || [])
-    .map((item) => {
-      if (typeof item === 'string') {
-        return { url: item, title: '', snippet: '' };
-      }
-      return {
-        url: String(item?.url || '').trim(),
-        title: cleanText(item?.title || '', 140),
-        snippet: cleanText(item?.snippet || item?.excerpt || '', 260),
-      };
-    })
-    .filter((item) => item.url.startsWith('https://www.zhihu.com/question/'));
-}
-
-function mergeAnswerItems(existingItems, incomingItems) {
-  const map = new Map();
-  normalizeAnswerItems(existingItems).forEach((item) => map.set(item.url, item));
-  normalizeAnswerItems(incomingItems).forEach((item) => {
-    const previous = map.get(item.url) || {};
-    map.set(item.url, {
-      url: item.url,
-      title: item.title || previous.title || '',
-      snippet: item.snippet || previous.snippet || '',
-    });
-  });
-  return [...map.values()];
-}
-
-function loadCachedItems(cached) {
-  if (Array.isArray(cached.items)) {
-    return normalizeAnswerItems(cached.items);
-  }
-  return normalizeAnswerItems(cached.urls || []);
-}
-
 function setProgress(fillEl, textEl, value, text) {
   const percent = Math.max(0, Math.min(100, Math.round(value)));
   fillEl.style.width = `${percent}%`;
@@ -139,6 +318,9 @@ function appendLog(message) {
   els.jobLog.scrollTop = els.jobLog.scrollHeight;
 }
 
+// ============================
+// Tab detection
+// ============================
 async function getActiveTab() {
   const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
   return tabs[0] || null;
@@ -155,6 +337,79 @@ function getSlugFromUrl(url) {
   }
 }
 
+// ============================
+// Item normalization (type-aware)
+// ============================
+function normalizeItems(rawItems) {
+  const config = currentConfig();
+  return (rawItems || [])
+    .map((item) => {
+      if (typeof item === 'string') {
+        return { url: item, title: '', snippet: '', contentHtml: '', author: '', createdTime: null, updatedTime: null };
+      }
+      return {
+        url: String(item?.url || '').trim(),
+        title: cleanText(item?.title || '', 140),
+        snippet: cleanText(item?.snippet || item?.excerpt || '', 260),
+        contentHtml: item?.contentHtml || '',
+        author: item?.author || '',
+        createdTime: item?.createdTime || null,
+        updatedTime: item?.updatedTime || null,
+      };
+    })
+    .filter((item) => config.urlFilter(item.url));
+}
+
+function mergeItems(existingItems, incomingItems) {
+  const map = new Map();
+  normalizeItems(existingItems).forEach((item) => map.set(item.url, item));
+  normalizeItems(incomingItems).forEach((item) => {
+    const previous = map.get(item.url) || {};
+    map.set(item.url, {
+      url: item.url,
+      title: item.title || previous.title || '',
+      snippet: item.snippet || previous.snippet || '',
+      contentHtml: item.contentHtml || previous.contentHtml || '',
+      author: item.author || previous.author || '',
+      createdTime: item.createdTime || previous.createdTime || null,
+      updatedTime: item.updatedTime || previous.updatedTime || null,
+    });
+  });
+  return [...map.values()];
+}
+
+function loadCachedItems(cached) {
+  if (Array.isArray(cached.items)) {
+    return normalizeItems(cached.items);
+  }
+  return normalizeItems(cached.urls || []);
+}
+
+// ============================
+// Cookie
+// ============================
+async function checkCookie() {
+  try {
+    const result = await chrome.runtime.sendMessage({ type: 'getZhihuCookie' });
+    if (!result?.ok || !result.cookie) {
+      setStatus(els.cookieStatus, '未获取', false);
+      return null;
+    }
+    setStatus(
+      els.cookieStatus,
+      result.hasLoginCookie ? `${result.count} 个登录凭证` : '登录状态未知',
+      result.hasLoginCookie
+    );
+    return result.cookie;
+  } catch {
+    setStatus(els.cookieStatus, '读取失败', false);
+    return null;
+  }
+}
+
+// ============================
+// Cache loading / switching
+// ============================
 async function loadCacheForActiveTab() {
   state.tab = await getActiveTab();
   state.slug = getSlugFromUrl(state.tab?.url || '');
@@ -180,26 +435,141 @@ async function loadCacheForActiveTab() {
   renderUrls();
 }
 
-async function checkCookie() {
-  try {
-    const result = await chrome.runtime.sendMessage({ type: 'getZhihuCookie' });
-    if (!result?.ok || !result.cookie) {
-      setStatus(els.cookieStatus, '未获取', false);
-      return null;
-    }
-    setStatus(
-      els.cookieStatus,
-      result.hasLoginCookie ? `${result.count} 个登录凭证` : '登录状态未知',
-      result.hasLoginCookie
-    );
-    return result.cookie;
-  } catch {
-    setStatus(els.cookieStatus, '读取失败', false);
-    return null;
+async function switchType(type) {
+  if (type === state.currentType) return;
+  state.currentType = type;
+  // Update button states
+  document.querySelectorAll('.type-btn').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.type === type);
+  });
+  // Reload cache for new type
+  await loadCacheForActiveTab();
+  // Update empty message
+  if (state.items.length === 0) {
+    const config = currentConfig();
+    els.urlList.innerHTML = `<div class="empty">当前主页还没有缓存的${config.label}链接。</div>`;
   }
 }
 
-async function scrapeAnswersFromPage(runId) {
+// ============================
+// Collection (injected into profile page)
+// ============================
+async function scrapeContentFromPage(type, runId) {
+  const injectedConfigs = {
+    answers: {
+      label: '回答',
+      apiEndpoints: [(slug) => `/api/v4/members/${encodeURIComponent(slug)}/answers`],
+      apiInclude: ['data[*].id', 'data[*].url', 'data[*].question.id', 'data[*].question.title', 'data[*].question.url', 'data[*].excerpt', 'data[*].excerpt_new', 'data[*].summary', 'data[*].content'],
+      apiSortBy: 'created',
+      domLinkSelector: 'a[href*="/question/"][href*="/answer/"]',
+      domItemSelector: '.List-item, .ContentItem, .AnswerItem',
+      domTitleSelector: '.ContentItem-title a, .QuestionHeader-title',
+      domSnippetSelector: '.RichContent-inner, .RichText, .ContentItem-excerpt',
+      domLinkNormalizer: (href) => {
+        try {
+          const parsed = new URL(href, window.location.origin);
+          const m = parsed.pathname.match(/\/question\/(\d+)\/answer\/(\d+)/);
+          return m ? `https://www.zhihu.com/question/${m[1]}/answer/${m[2]}` : '';
+        } catch { return ''; }
+      },
+      apiItemToUrl: (item) => {
+        const qid = item?.question?.id || String(item?.question?.url || '').match(/questions\/(\d+)/)?.[1] || String(item?.url || '').match(/questions\/(\d+)/)?.[1];
+        const aid = item?.id || String(item?.url || '').match(/answers\/(\d+)/)?.[1];
+        return (qid && aid) ? `https://www.zhihu.com/question/${qid}/answer/${aid}` : '';
+      },
+      apiItemToTitle: (item) => item?.question?.title || '',
+      apiItemToSnippet: (item) => item?.excerpt || item?.excerpt_new || item?.summary || item?.content || '',
+      apiItemToExtraFields: () => ({}),
+      domItemToUrl: () => '',
+    },
+    articles: {
+      label: '文章',
+      apiEndpoints: [
+        (slug) => `/api/v4/members/${encodeURIComponent(slug)}/posts`,
+        (slug) => `/api/v4/members/${encodeURIComponent(slug)}/articles`,
+      ],
+      apiInclude: null,
+      apiSortBy: 'created',
+      domLinkSelector: 'a[href*="zhuanlan.zhihu.com/p/"], a[href^="//zhuanlan.zhihu.com/p/"], a[href^="/p/"]',
+      domItemSelector: '.ContentItem.ArticleItem, .ArticleItem, .List-item',
+      domTitleSelector: '.ContentItem-title a',
+      domSnippetSelector: '.RichContent-inner, .RichText, .ContentItem-excerpt, .PostIndex-content',
+      domLinkNormalizer: (href) => {
+        try {
+          const parsed = new URL(href, window.location.origin);
+          const m = parsed.pathname.match(/\/p\/(\d+)/);
+          return m ? `https://zhuanlan.zhihu.com/p/${m[1]}` : '';
+        } catch { return ''; }
+      },
+      apiItemToUrl: (item) => {
+        const rawUrl = String(item?.url || '');
+        if (rawUrl.startsWith('http')) return rawUrl.replace(/^http:\/\//, 'https://');
+        if (rawUrl.startsWith('//')) return `https:${rawUrl}`;
+        const id = item?.id || item?.article_id;
+        return id ? `https://zhuanlan.zhihu.com/p/${id}` : '';
+      },
+      apiItemToTitle: (item) => item?.title || '',
+      apiItemToSnippet: (item) => item?.excerpt || item?.summary || item?.content || '',
+      apiItemToExtraFields: () => ({}),
+      domItemToUrl: (data) => data?.type === 'article' && data?.itemId ? `https://zhuanlan.zhihu.com/p/${data.itemId}` : '',
+    },
+    pins: {
+      label: '想法',
+      apiEndpoints: [(slug) => `/api/v4/members/${encodeURIComponent(slug)}/pins`],
+      apiInclude: null,
+      apiSortBy: 'created',
+      domLinkSelector: 'a[href*="/pin/"]',
+      domItemSelector: '.ContentItem.PinItem, .PinItem, .List-item',
+      domTitleSelector: null,
+      domSnippetSelector: '.PinItem-contentWrapper, .PinItem-content, .RichText',
+      domLinkNormalizer: (href) => {
+        try {
+          const parsed = new URL(href, window.location.origin);
+          const m = parsed.pathname.match(/\/pin\/(\d+)/);
+          return m ? `https://www.zhihu.com/pin/${m[1]}` : '';
+        } catch { return ''; }
+      },
+      apiItemToUrl: (item) => {
+        const rawUrl = String(item?.url || '');
+        if (rawUrl.startsWith('http')) return rawUrl.replace(/^http:\/\//, 'https://');
+        if (rawUrl.startsWith('//')) return `https:${rawUrl}`;
+        const id = item?.id || item?.pin_id;
+        return id ? `https://www.zhihu.com/pin/${id}` : '';
+      },
+      apiItemToTitle: (item) => `想法${item?.id || item?.pin_id || ''}`,
+      apiItemToSnippet: (item) => {
+        const html = typeof item?.contentHtml === 'string' ? item.contentHtml : '';
+        const content = typeof item?.content === 'string' ? item.content : '';
+        return (html || content || item?.excerpt || '').replace(/<[^>]*>/g, '').trim().slice(0, 260);
+      },
+      apiItemToExtraFields: (item) => {
+        let fullHtml = typeof item?.contentHtml === 'string' ? item.contentHtml : '';
+        if (!fullHtml && typeof item?.content === 'string') fullHtml = item.content;
+        if (Array.isArray(item?.content)) {
+          const textHtml = item.content
+            .filter((entry) => entry?.type === 'text' && entry?.content)
+            .map((entry) => `<p>${String(entry.content).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</p>`)
+            .join('\n');
+          const imgsHtml = item.content
+            .filter((entry) => entry?.type === 'image' && entry?.originalUrl)
+            .map((entry) => `<img src="${entry.originalUrl}" />`)
+            .join('\n');
+          const blocksHtml = [textHtml, imgsHtml].filter(Boolean).join('\n');
+          if (blocksHtml) fullHtml += (fullHtml ? '\n' : '') + blocksHtml;
+        }
+        return {
+          contentHtml: fullHtml,
+          author: item?.author?.name || '知乎用户',
+          createdTime: item?.created || null,
+          updatedTime: item?.updated || null,
+        };
+      },
+      domItemToUrl: (data) => data?.type === 'pin' && data?.itemId ? `https://www.zhihu.com/pin/${data.itemId}` : '',
+    },
+  };
+  const config = injectedConfigs[type];
+  if (!config) throw new Error('未知的内容类型。');
+
   const match = window.location.pathname.match(/\/people\/([^/]+)/);
   if (!match) {
     throw new Error('当前标签页不是知乎个人主页。');
@@ -208,21 +578,9 @@ async function scrapeAnswersFromPage(runId) {
   const slug = decodeURIComponent(match[1]);
   const limit = 20;
   const delayMs = 600;
-  const include = [
-    'data[*].id',
-    'data[*].url',
-    'data[*].question.id',
-    'data[*].question.title',
-    'data[*].question.url',
-    'data[*].excerpt',
-    'data[*].excerpt_new',
-    'data[*].summary',
-    'data[*].content',
-  ].join(',');
+  const include = config.apiInclude ? config.apiInclude.join(',') : null;
   const itemsByUrl = new Map();
   let remoteTotal = null;
-  let offset = 0;
-  let isEnd = false;
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const clean = (value, maxLength = 220) => {
@@ -238,28 +596,10 @@ async function scrapeAnswersFromPage(runId) {
     try {
       chrome.runtime.sendMessage({ type: 'collectionProgress', runId, ...payload });
     } catch {
-      // Progress reporting is best-effort.
+      // Best-effort progress reporting.
     }
   };
-  const normalizeAnswerUrl = (href) => {
-    try {
-      const parsed = new URL(href, window.location.origin);
-      const match = parsed.pathname.match(/\/question\/(\d+)\/answer\/(\d+)/);
-      if (!match) return '';
-      return `https://www.zhihu.com/question/${match[1]}/answer/${match[2]}`;
-    } catch {
-      return '';
-    }
-  };
-  const apiUrlToWebUrl = (answer) => {
-    const questionId =
-      answer?.question?.id ||
-      String(answer?.question?.url || '').match(/questions\/(\d+)/)?.[1] ||
-      String(answer?.url || '').match(/questions\/(\d+)/)?.[1];
-    const answerId = answer?.id || String(answer?.url || '').match(/answers\/(\d+)/)?.[1];
-    if (!questionId || !answerId) return '';
-    return `https://www.zhihu.com/question/${questionId}/answer/${answerId}`;
-  };
+
   const rememberItem = (item) => {
     if (!item.url) return;
     const previous = itemsByUrl.get(item.url) || {};
@@ -267,68 +607,118 @@ async function scrapeAnswersFromPage(runId) {
       url: item.url,
       title: clean(item.title || previous.title || '', 140),
       snippet: clean(item.snippet || previous.snippet || '', 260),
+      contentHtml: item.contentHtml || previous.contentHtml || '',
+      author: item.author || previous.author || '',
+      createdTime: item.createdTime || previous.createdTime || null,
+      updatedTime: item.updatedTime || previous.updatedTime || null,
     });
   };
 
-  document
-    .querySelectorAll('a[href*="/question/"][href*="/answer/"]')
-    .forEach((anchor) => {
-      const url = normalizeAnswerUrl(anchor.getAttribute('href') || '');
-      if (!url) return;
-      const container = anchor.closest('.List-item, .ContentItem, .AnswerItem') || anchor.parentElement;
-      const snippetEl = container?.querySelector('.RichContent-inner, .RichText, .ContentItem-excerpt');
-      rememberItem({ url, title: anchor.textContent, snippet: snippetEl?.textContent || '' });
+  const readDataJson = (element, attrName) => {
+    const raw = element?.getAttribute(attrName);
+    if (!raw) return null;
+    try { return JSON.parse(raw); } catch { return null; }
+  };
+
+  const titleFromContainer = (container, anchor, fallback = '') => {
+    if (!config.domTitleSelector) return fallback;
+    return container?.querySelector(config.domTitleSelector)?.textContent || anchor?.textContent || fallback;
+  };
+
+  // DOM sniffing: find visible links on the current page.
+  document.querySelectorAll(config.domLinkSelector).forEach((anchor) => {
+    const url = config.domLinkNormalizer(anchor.getAttribute('href') || '');
+    if (!url) return;
+    const container = anchor.closest(config.domItemSelector) || anchor.parentElement;
+    const snippetEl = container?.querySelector(config.domSnippetSelector);
+    const id = url.match(/\/(?:p|pin|answer)\/(\d+)/)?.[1] || '';
+    rememberItem({
+      url,
+      title: titleFromContainer(container, anchor, config.domTitleSelector ? '' : `${config.label}${id}`),
+      snippet: snippetEl?.textContent || '',
     });
+  });
+
+  // Some cards expose the canonical id in data-zop while the visible link is
+  // only a timestamp or is hidden behind expanded content.
+  document.querySelectorAll(config.domItemSelector).forEach((container) => {
+    const data = readDataJson(container, 'data-zop');
+    const url = config.domItemToUrl(data);
+    if (!url) return;
+    const id = url.match(/\/(?:p|pin)\/(\d+)/)?.[1] || data?.itemId || '';
+    const snippetEl = container.querySelector(config.domSnippetSelector);
+    rememberItem({
+      url,
+      title: titleFromContainer(container, null, data?.title || `${config.label}${id}`),
+      snippet: snippetEl?.textContent || '',
+    });
+  });
 
   report({
     phase: 'html',
     fetched: itemsByUrl.size,
     total: null,
     page: 0,
-    message: `当前页面发现 ${itemsByUrl.size} 条链接`,
+    message: `当前页面发现 ${itemsByUrl.size} 条${config.label}链接`,
   });
 
-  while (!isEnd) {
-    const apiUrl =
-      `/api/v4/members/${encodeURIComponent(slug)}/answers` +
-      `?include=${encodeURIComponent(include)}` +
-      `&offset=${offset}` +
-      `&limit=${limit}` +
-      `&sort_by=created`;
+  const apiErrors = [];
+  let apiSucceeded = false;
 
-    const response = await fetch(apiUrl, {
-      credentials: 'include',
-      headers: { 'X-Requested-With': 'Fetch' },
-    });
-    if (!response.ok) {
-      throw new Error(`知乎接口返回 HTTP ${response.status}。`);
+  for (const endpoint of config.apiEndpoints) {
+    let offset = 0;
+    let isEnd = false;
+    try {
+      while (!isEnd) {
+        let apiUrl = endpoint(slug) + `?offset=${offset}&limit=${limit}`;
+        if (config.apiSortBy) apiUrl += `&sort_by=${config.apiSortBy}`;
+        if (include) apiUrl += `&include=${encodeURIComponent(include)}`;
+
+        const response = await fetch(apiUrl, {
+          credentials: 'include',
+          headers: { 'X-Requested-With': 'Fetch' },
+        });
+        if (!response.ok) {
+          throw new Error(`${apiUrl} HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        (data.data || []).forEach((item) => {
+          const url = config.apiItemToUrl(item);
+          if (!url) return;
+          const extra = config.apiItemToExtraFields ? config.apiItemToExtraFields(item) : {};
+          rememberItem({
+            url,
+            title: config.apiItemToTitle(item),
+            snippet: config.apiItemToSnippet(item),
+            ...extra,
+          });
+        });
+
+        isEnd = data.paging?.is_end ?? true;
+        const totalRemote = Number(data.paging?.totals || 0);
+        if (totalRemote) remoteTotal = totalRemote;
+        const uniqueCount = itemsByUrl.size;
+        report({
+          phase: 'api',
+          fetched: uniqueCount,
+          total: totalRemote || null,
+          page: Math.floor(offset / limit) + 1,
+          isEnd,
+          message: totalRemote ? `${uniqueCount} / ${totalRemote} 条${config.label}` : `已获取 ${uniqueCount} 条${config.label}`,
+        });
+        offset += limit;
+        if (!isEnd) await sleep(delayMs);
+      }
+      apiSucceeded = true;
+      break;
+    } catch (error) {
+      apiErrors.push(error.message);
     }
+  }
 
-    const data = await response.json();
-    (data.data || []).forEach((answer) => {
-      const url = apiUrlToWebUrl(answer);
-      if (!url) return;
-      rememberItem({
-        url,
-        title: answer.question?.title || '',
-        snippet: answer.excerpt || answer.excerpt_new || answer.summary || answer.content || '',
-      });
-    });
-
-    isEnd = data.paging?.is_end ?? true;
-    const totalRemote = Number(data.paging?.totals || 0);
-    if (totalRemote) remoteTotal = totalRemote;
-    const uniqueCount = itemsByUrl.size;
-    report({
-      phase: 'api',
-      fetched: uniqueCount,
-      total: totalRemote || null,
-      page: Math.floor(offset / limit) + 1,
-      isEnd,
-      message: totalRemote ? `${uniqueCount} / ${totalRemote} 条链接` : `已获取 ${uniqueCount} 条链接`,
-    });
-    offset += limit;
-    if (!isEnd) await sleep(delayMs);
+  if (!apiSucceeded && itemsByUrl.size === 0 && apiErrors.length) {
+    throw new Error(`知乎接口不可用：${apiErrors.join('；')}`);
   }
 
   const items = [...itemsByUrl.values()];
@@ -342,7 +732,36 @@ async function scrapeAnswersFromPage(runId) {
   return { slug, items, urls: items.map((item) => item.url), remoteTotal };
 }
 
-async function hydratePreviewsFromPage(runId, rawItems) {
+// ============================
+// Hydrate missing previews (injected into profile page)
+// ============================
+async function hydratePreviewsFromPage(type, runId, rawItems) {
+  const injectedConfigs = {
+    answers: {
+      label: '回答',
+      initialDataIdFromUrl: (url) => { const m = String(url || '').match(/\/answer\/(\d+)/); return m ? m[1] : ''; },
+      hydrateApiUrl: (id) => `/api/v4/answers/${id}?include=` + encodeURIComponent(['content', 'excerpt', 'excerpt_new', 'summary', 'question.title'].join(',')),
+      hydrateParseResponse: (data) => ({ title: data.question?.title || '', snippet: data.excerpt || data.excerpt_new || data.summary || data.content || '' }),
+      hydrateDomSelectors: { title: '.QuestionHeader-title', content: '.RichContent-inner, .RichText' },
+    },
+    articles: {
+      label: '文章',
+      initialDataIdFromUrl: (url) => { const m = String(url || '').match(/\/p\/(\d+)/); return m ? m[1] : ''; },
+      hydrateApiUrl: () => null,
+      hydrateParseResponse: () => null,
+      hydrateDomSelectors: { title: '.Post-Title', content: '.Post-RichText, .RichText' },
+    },
+    pins: {
+      label: '想法',
+      initialDataIdFromUrl: (url) => { const m = String(url || '').match(/\/pin\/(\d+)/); return m ? m[1] : ''; },
+      hydrateApiUrl: () => null,
+      hydrateParseResponse: () => null,
+      hydrateDomSelectors: { title: null, content: '.PinItem-contentWrapper, .RichText' },
+    },
+  };
+  const config = injectedConfigs[type];
+  if (!config) throw new Error('未知的内容类型。');
+
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const clean = (value, maxLength = 260) => {
     const div = document.createElement('div');
@@ -357,16 +776,18 @@ async function hydratePreviewsFromPage(runId, rawItems) {
     try {
       chrome.runtime.sendMessage({ type: 'collectionProgress', runId, ...payload });
     } catch {
-      // Progress reporting is best-effort.
+      // Best-effort.
     }
   };
-  const parseAnswerId = (url) => String(url || '').match(/\/answer\/(\d+)/)?.[1] || '';
+
   const items = (rawItems || []).map((item) => ({ ...item }));
-  const targets = items.filter((item) => !item.snippet && parseAnswerId(item.url));
+  // Only items with a URL that can be used for hydration
+  const targets = items.filter((item) => !item.snippet && item.url);
+
+  const domSel = config.hydrateDomSelectors;
 
   for (let index = 0; index < targets.length; index++) {
     const item = targets[index];
-    const answerId = parseAnswerId(item.url);
     report({
       phase: 'hydrate',
       fetched: index,
@@ -375,38 +796,51 @@ async function hydratePreviewsFromPage(runId, rawItems) {
     });
 
     try {
-      const apiUrl =
-        `/api/v4/answers/${answerId}?include=` +
-        encodeURIComponent(['content', 'excerpt', 'excerpt_new', 'summary', 'question.title'].join(','));
-      const response = await fetch(apiUrl, {
-        credentials: 'include',
-        headers: { 'X-Requested-With': 'Fetch' },
-      });
-      if (response.ok) {
-        const data = await response.json();
-        item.title = clean(data.question?.title || item.title || '', 140);
-        item.snippet = clean(data.excerpt || data.excerpt_new || data.summary || data.content || '', 260);
+      // Try dedicated API if available
+      const id = config.initialDataIdFromUrl(item.url);
+      const apiUrl = id ? config.hydrateApiUrl(id) : null;
+      let hydrated = false;
+
+      if (apiUrl) {
+        const response = await fetch(apiUrl, {
+          credentials: 'include',
+          headers: { 'X-Requested-With': 'Fetch' },
+        });
+        if (response.ok) {
+          const data = await response.json();
+          const parsed = config.hydrateParseResponse(data);
+          if (parsed) {
+            if (parsed.title) item.title = clean(parsed.title, 140);
+            if (parsed.snippet) { item.snippet = clean(parsed.snippet, 260); hydrated = true; }
+          }
+        }
       }
-      if (!item.snippet) {
+
+      // Fallback: fetch the page directly
+      if (!hydrated) {
         const pageResponse = await fetch(item.url, { credentials: 'include' });
         if (pageResponse.ok) {
           const pageHtml = await pageResponse.text();
           const doc = new DOMParser().parseFromString(pageHtml, 'text/html');
-          const title =
-            doc.querySelector('.QuestionHeader-title')?.textContent ||
-            doc.querySelector('title')?.textContent ||
-            item.title ||
-            '';
-          const content =
-            doc.querySelector('.RichContent-inner')?.textContent ||
-            doc.querySelector('.RichText')?.textContent ||
-            '';
-          item.title = clean(title.replace(/\s*-\s*知乎$/, ''), 140);
-          item.snippet = clean(content, 260);
+          if (domSel.title) {
+            const titleEl = doc.querySelector(domSel.title) || doc.querySelector('title');
+            if (titleEl) {
+              item.title = clean(titleEl.textContent?.replace(/\s*-\s*知乎$/, '') || item.title || '', 140);
+            }
+          }
+          if (domSel.content) {
+            const contentEl = doc.querySelector(domSel.content.split(',')[0]);
+            if (contentEl) {
+              item.snippet = clean(contentEl.textContent || '', 260);
+            } else {
+              const anyRich = doc.querySelector(domSel.content);
+              if (anyRich) item.snippet = clean(anyRich.textContent || '', 260);
+            }
+          }
         }
       }
     } catch {
-      // Keep the existing item if an individual preview fetch fails.
+      // Keep existing item on failure.
     }
     await sleep(250);
   }
@@ -420,6 +854,9 @@ async function hydratePreviewsFromPage(runId, rawItems) {
   return items;
 }
 
+// ============================
+// Collect URLs (orchestrator)
+// ============================
 async function collectUrls() {
   if (!state.tab?.id || !state.slug) {
     await loadCacheForActiveTab();
@@ -434,15 +871,15 @@ async function collectUrls() {
   try {
     const [result] = await chrome.scripting.executeScript({
       target: { tabId: state.tab.id },
-      func: scrapeAnswersFromPage,
-      args: [state.collectRunId],
+      func: scrapeContentFromPage,
+      args: [state.currentType, state.collectRunId],
     });
     if (result.error) throw new Error(result.error.message);
 
     const collected = result.result || {};
     const previousUrlCount = state.urls.length;
-    const collectedItems = normalizeAnswerItems(collected.items || collected.urls || []);
-    const merged = mergeAnswerItems(state.items, collectedItems);
+    const collectedItems = normalizeItems(collected.items || collected.urls || []);
+    const merged = mergeItems(state.items, collectedItems);
     const added = merged.length - previousUrlCount;
 
     state.slug = collected.slug || state.slug;
@@ -474,6 +911,9 @@ async function collectUrls() {
   }
 }
 
+// ============================
+// Hydrate missing previews (orchestrator)
+// ============================
 async function hydrateMissingPreviews() {
   if (!state.tab?.id || !state.slug) {
     await loadCacheForActiveTab();
@@ -495,11 +935,11 @@ async function hydrateMissingPreviews() {
     const [result] = await chrome.scripting.executeScript({
       target: { tabId: state.tab.id },
       func: hydratePreviewsFromPage,
-      args: [state.collectRunId, state.items],
+      args: [state.currentType, state.collectRunId, state.items],
     });
     if (result.error) throw new Error(result.error.message);
 
-    state.items = mergeAnswerItems(state.items, normalizeAnswerItems(result.result || []));
+    state.items = mergeItems(state.items, normalizeItems(result.result || []));
     state.urls = itemUrls(state.items);
     await storageSet({
       [cacheKey(state.slug)]: {
@@ -521,53 +961,79 @@ async function hydrateMissingPreviews() {
   }
 }
 
-function parseAnswerUrl(url) {
-  const match = String(url || '').match(/zhihu\.com\/question\/(\d+)\/answer\/(\d+)/);
-  if (!match) return null;
-  return { questionId: match[1], answerId: match[2] };
+// ============================
+// Content URL parsing
+// ============================
+function parseContentUrl(url) {
+  const config = currentConfig();
+  const id = config.initialDataIdFromUrl(url);
+  if (!id) return null;
+  return { id };
 }
 
-function extractAnswer(url, pageHtml) {
-  const ids = parseAnswerUrl(url);
+// ============================
+// Content extraction (dual-source)
+// ============================
+function extractContent(url, pageHtml) {
+  const config = currentConfig();
+  const ids = parseContentUrl(url);
   if (!ids) return null;
 
   const doc = new DOMParser().parseFromString(pageHtml, 'text/html');
   const script = doc.querySelector('#js-initialData');
   let fromData = null;
+
+  // Source 1: js-initialData JSON
   if (script?.textContent) {
     try {
       const initialData = JSON.parse(script.textContent);
-      const answerData = initialData?.initialState?.entities?.answers?.[ids.answerId];
-      if (answerData) {
+      const entityData = initialData?.initialState?.entities?.[config.initialDataEntity]?.[ids.id];
+      if (entityData) {
+        const base = {
+          title: config.initialDataTitle(entityData, initialData),
+          author: config.initialDataAuthor(entityData, initialData),
+          html: config.initialDataContent(entityData, initialData),
+        };
+        const supp = config.initialDataSupplementHtml(entityData, initialData);
+        if (supp) base.html += supp;
         fromData = {
-          title: answerData?.question?.title || '',
-          author: answerData?.author?.name || '知乎用户',
-          html: answerData?.content || '',
-          createdTime: answerData?.created_time || null,
-          updatedTime: answerData?.updated_time || null,
+          ...base,
+          title: base.title || '',
+          author: base.author || '知乎用户',
+          createdTime: config.initialDataCreated(entityData),
+          updatedTime: config.initialDataUpdated(entityData),
         };
       }
     } catch {
-      // Fall through to DOM extraction.
+      // Fall through to DOM.
     }
   }
 
-  const richContent = doc.querySelector('.RichContent-inner');
-  const titleEl =
-    doc.querySelector('.QuestionHeader-title') ||
-    doc.querySelector('h1.QuestionHeader-title') ||
-    doc.querySelector('title');
-  const authorEl = doc.querySelector('.AuthorInfo-name a') || doc.querySelector('[itemprop="name"]');
-  const fromDOM = richContent
-    ? {
-        title: cleanText((titleEl?.textContent || '').replace(/\s*-\s*知乎$/, ''), 200),
-        author: cleanText(authorEl?.textContent || '知乎用户', 120),
-        html: richContent.innerHTML,
-        createdTime: null,
-        updatedTime: null,
-      }
-    : null;
+  // Source 2: DOM extraction
+  const sel = config.domSelectors;
+  let fromDOM = null;
+  const contentEl = sel.content ? doc.querySelector(sel.content) : null;
+  const titleEl = sel.title ? (doc.querySelector(sel.title) || doc.querySelector('title')) : null;
+  const authorEl = sel.author ? doc.querySelector(sel.author) : null;
+  const elementText = (el) => el?.getAttribute?.('content') || el?.textContent || '';
 
+  if (contentEl) {
+    let title = '';
+    if (sel.title && titleEl) {
+      title = cleanText(elementText(titleEl).replace(/\s*-\s*知乎$/, ''), 200);
+    } else if (!config.hasTitle) {
+      title = `${config.defaultName}${ids.id}`;
+    }
+    fromDOM = {
+      title,
+      author: authorEl ? cleanText(elementText(authorEl) || '知乎用户', 120) : '知乎用户',
+      html: contentEl.innerHTML,
+      createdTime: null,
+      updatedTime: null,
+    };
+  }
+
+  // Choose the longer HTML source
   const chosen =
     fromData && fromDOM
       ? fromDOM.html.length > fromData.html.length
@@ -576,10 +1042,15 @@ function extractAnswer(url, pageHtml) {
       : fromData || fromDOM;
 
   if (!chosen?.html) return null;
+
+  // Synthesize title for types without one
+  const finalTitle = chosen.title || `${config.defaultName}${ids.id}`;
+
   return {
     ...ids,
     url,
-    title: chosen.title || `知乎问题 ${ids.questionId}`,
+    type: state.currentType,
+    title: finalTitle,
     author: chosen.author || '知乎用户',
     html: chosen.html,
     createdTime: chosen.createdTime || null,
@@ -587,6 +1058,9 @@ function extractAnswer(url, pageHtml) {
   };
 }
 
+// ============================
+// Markdown conversion
+// ============================
 function markdownEscape(text) {
   return String(text || '').replace(/\*/g, '\\*').replace(/_/g, '\\_').replace(/\[/g, '\\[').replace(/\]/g, '\\]');
 }
@@ -665,14 +1139,19 @@ function formatTimestamp(ts) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+// ============================
+// Build Markdown from extracted content
+// ============================
 function buildMarkdown(data) {
+  const config = currentConfig();
   const escapeYaml = (value) => String(value || '').replace(/"/g, '\\"');
+  const idField = state.currentType === 'answers' ? 'id' : 'id';
   const lines = [
     '---',
-    `id: "${escapeYaml(data.answerId)}"`,
+    `id: "${escapeYaml(data.id)}"`,
     `title: "${escapeYaml(data.title)}"`,
     `author: "${escapeYaml(data.author)}"`,
-    'type: zhihu-answer',
+    `type: ${config.frontmatterType}`,
     `source: "${escapeYaml(data.url)}"`,
   ];
   const created = formatTimestamp(data.createdTime);
@@ -685,16 +1164,21 @@ function buildMarkdown(data) {
 }
 
 function sanitizeFilenamePart(value) {
+  const defaultName = currentConfig().defaultName;
   return cleanText(value || '', 80)
     .replace(/[\\/:*?"<>|#^[\]()]/g, '')
     .replace(/\s+/g, ' ')
-    .trim() || 'zhihu-answer';
+    .trim() || `zhihu-${defaultName}`;
 }
 
 function buildFilename(data) {
-  return `${sanitizeFilenamePart(data.title)}-${data.answerId}.md`;
+  const config = currentConfig();
+  return `${sanitizeFilenamePart(data.title)}-${data.id}.md`;
 }
 
+// ============================
+// ZIP utilities (unchanged logic)
+// ============================
 function makeCrcTable() {
   const table = new Uint32Array(256);
   for (let n = 0; n < 256; n++) {
@@ -706,7 +1190,6 @@ function makeCrcTable() {
   }
   return table;
 }
-
 const CRC_TABLE = makeCrcTable();
 
 function crc32(bytes) {
@@ -718,14 +1201,8 @@ function crc32(bytes) {
 }
 
 function dosDateTime(date = new Date()) {
-  const time =
-    (date.getHours() << 11) |
-    (date.getMinutes() << 5) |
-    Math.floor(date.getSeconds() / 2);
-  const dosDate =
-    ((date.getFullYear() - 1980) << 9) |
-    ((date.getMonth() + 1) << 5) |
-    date.getDate();
+  const time = (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2);
+  const dosDate = ((date.getFullYear() - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate();
   return { time, date: dosDate };
 }
 
@@ -753,57 +1230,23 @@ function createZipBlob(files) {
     const dataBytes = encoder.encode(file.data);
     const crc = crc32(dataBytes);
     const localHeader = [
-      u32(0x04034b50),
-      u16(20),
-      u16(0x0800),
-      u16(0),
-      u16(time),
-      u16(date),
-      u32(crc),
-      u32(dataBytes.length),
-      u32(dataBytes.length),
-      u16(nameBytes.length),
-      u16(0),
+      u32(0x04034b50), u16(20), u16(0x0800), u16(0), u16(time), u16(date),
+      u32(crc), u32(dataBytes.length), u32(dataBytes.length), u16(nameBytes.length), u16(0),
       nameBytes,
     ];
     parts.push(...localHeader, dataBytes);
 
     centralParts.push(
-      u32(0x02014b50),
-      u16(20),
-      u16(20),
-      u16(0x0800),
-      u16(0),
-      u16(time),
-      u16(date),
-      u32(crc),
-      u32(dataBytes.length),
-      u32(dataBytes.length),
-      u16(nameBytes.length),
-      u16(0),
-      u16(0),
-      u16(0),
-      u16(0),
-      u32(0),
-      u32(offset),
-      nameBytes
+      u32(0x02014b50), u16(20), u16(20), u16(0x0800), u16(0), u16(time), u16(date),
+      u32(crc), u32(dataBytes.length), u32(dataBytes.length), u16(nameBytes.length),
+      u16(0), u16(0), u16(0), u16(0), u32(0), u32(offset), nameBytes
     );
-
     offset += localHeader.reduce((sum, part) => sum + part.length, 0) + dataBytes.length;
   });
 
   const centralSize = centralParts.reduce((sum, part) => sum + part.length, 0);
   const centralOffset = offset;
-  const endRecord = [
-    u32(0x06054b50),
-    u16(0),
-    u16(0),
-    u16(files.length),
-    u16(files.length),
-    u32(centralSize),
-    u32(centralOffset),
-    u16(0),
-  ];
+  const endRecord = [u32(0x06054b50), u16(0), u16(0), u16(files.length), u16(files.length), u32(centralSize), u32(centralOffset), u16(0)];
   return new Blob([...parts, ...centralParts, ...endRecord], { type: 'application/zip' });
 }
 
@@ -811,18 +1254,11 @@ function downloadBlob(blob, filename) {
   return new Promise((resolve, reject) => {
     const blobUrl = URL.createObjectURL(blob);
     chrome.downloads.download(
-      {
-        url: blobUrl,
-        filename,
-        saveAs: true,
-      },
+      { url: blobUrl, filename, saveAs: true },
       (downloadId) => {
         const error = chrome.runtime.lastError;
         setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
-        if (error) {
-          reject(new Error(error.message));
-          return;
-        }
+        if (error) { reject(new Error(error.message)); return; }
         resolve(downloadId);
       }
     );
@@ -833,6 +1269,9 @@ function selectedItems() {
   return state.items.filter((item) => state.selected.has(item.url));
 }
 
+// ============================
+// Export ZIP
+// ============================
 async function exportSelectedZip() {
   const cookie = await checkCookie();
   if (!cookie) {
@@ -851,6 +1290,7 @@ async function exportSelectedZip() {
   els.jobCounts.textContent = `0 / ${items.length}`;
   setProgress(els.exportProgressFill, els.exportProgressText, 0, `0 / ${items.length}`);
 
+  const config = currentConfig();
   const files = [];
   const failures = [];
 
@@ -861,22 +1301,45 @@ async function exportSelectedZip() {
         throw new Error('导出已取消。');
       }
 
-      appendLog(`正在获取 ${item.url}`);
-      try {
-        const response = await fetch(item.url, {
-          credentials: 'include',
-          signal: state.exportAbortController.signal,
-        });
-        if (!response.ok) throw new Error(`请求失败：HTTP ${response.status}`);
-        const html = await response.text();
-        const answer = extractAnswer(item.url, html);
-        if (!answer) throw new Error('无法提取回答内容。');
-        const markdown = buildMarkdown(answer);
-        files.push({ name: `answers/${buildFilename(answer)}`, data: markdown });
-        appendLog(`已加入：${answer.title}`);
-      } catch (error) {
-        failures.push({ url: item.url, error: error.message });
-        appendLog(`失败 ${item.url}：${error.message}`);
+      // For pins: use cached contentHtml directly (no standalone pin pages)
+      if (state.currentType === 'pins' && item.contentHtml) {
+        appendLog(`使用缓存内容：${item.url}`);
+        try {
+          const pinId = item.url.match(/\/pin\/(\d+)/)?.[1] || item.title.replace(/^想法/, '') || '';
+          const content = {
+            id: pinId,
+            url: item.url,
+            title: item.title || `想法${pinId}`,
+            author: item.author || '知乎用户',
+            html: item.contentHtml,
+            createdTime: item.createdTime || null,
+            updatedTime: item.updatedTime || null,
+          };
+          const markdown = buildMarkdown(content);
+          files.push({ name: `${config.folderName}/${buildFilename(content)}`, data: markdown });
+          appendLog(`已加入：${content.title}`);
+        } catch (error) {
+          failures.push({ url: item.url, error: error.message });
+          appendLog(`失败 ${item.url}：${error.message}`);
+        }
+      } else {
+        appendLog(`正在获取 ${item.url}`);
+        try {
+          const response = await fetch(item.url, {
+            credentials: 'include',
+            signal: state.exportAbortController.signal,
+          });
+          if (!response.ok) throw new Error(`请求失败：HTTP ${response.status}`);
+          const html = await response.text();
+          const content = extractContent(item.url, html);
+          if (!content) throw new Error(`无法提取${config.label}内容。`);
+          const markdown = buildMarkdown(content);
+          files.push({ name: `${config.folderName}/${buildFilename(content)}`, data: markdown });
+          appendLog(`已加入：${content.title}`);
+        } catch (error) {
+          failures.push({ url: item.url, error: error.message });
+          appendLog(`失败 ${item.url}：${error.message}`);
+        }
       }
 
       const completed = index + 1;
@@ -896,7 +1359,7 @@ async function exportSelectedZip() {
     appendLog('正在打包 ZIP...');
     const zipBlob = createZipBlob(files);
     const datePart = new Date().toISOString().slice(0, 10);
-    const filename = `zhihu_answers_${state.slug || 'export'}_${datePart}.zip`;
+    const filename = `zhihu_${config.labelEn}_${state.slug || 'export'}_${datePart}.zip`;
     await downloadBlob(zipBlob, filename);
 
     els.jobStatus.textContent = failures.length ? 'ZIP 已下载，但有失败项' : 'ZIP 已下载';
@@ -912,14 +1375,18 @@ async function exportSelectedZip() {
   }
 }
 
+// ============================
+// Render functions
+// ============================
 function renderUrls() {
+  const config = currentConfig();
   els.cacheStatus.textContent = state.remoteTotal
     ? `${state.items.length} / ${state.remoteTotal}`
     : `${state.items.length} 条`;
   els.lastCollectedText.textContent = state.lastCollectedAt ? formatTime(state.lastCollectedAt) : '';
 
   if (state.items.length === 0) {
-    els.urlList.innerHTML = '<div class="empty">当前主页还没有缓存的回答链接。</div>';
+    els.urlList.innerHTML = `<div class="empty">当前主页还没有缓存的${config.label}链接。</div>`;
     renderSelection();
     return;
   }
@@ -927,8 +1394,8 @@ function renderUrls() {
   els.urlList.innerHTML = state.items
     .map((item, index) => {
       const checked = state.selected.has(item.url) ? 'checked' : '';
-      const title = item.title || '未命名知乎回答';
-      const snippet = item.snippet || '还没有采集到预览内容。可点击“补全预览”。';
+      const title = item.title || `未命名知乎${config.label}`;
+      const snippet = item.snippet || `还没有采集到预览内容。可点击"补全预览"。`;
       return `
         <label class="url-item">
           <input type="checkbox" data-index="${index}" ${checked}>
@@ -953,6 +1420,9 @@ function renderSelection() {
   els.cancelButton.disabled = !exporting;
 }
 
+// ============================
+// Message listener (collection progress)
+// ============================
 chrome.runtime.onMessage.addListener((message) => {
   if (!message || message.type !== 'collectionProgress') return;
   if (message.runId !== state.collectRunId) return;
@@ -961,8 +1431,7 @@ chrome.runtime.onMessage.addListener((message) => {
   const total = message.total || 0;
   if (total > 0) {
     setProgress(
-      els.collectProgressFill,
-      els.collectProgressText,
+      els.collectProgressFill, els.collectProgressText,
       (fetched / total) * 100,
       message.message || `${fetched} / ${total} 条`
     );
@@ -971,13 +1440,15 @@ chrome.runtime.onMessage.addListener((message) => {
 
   const rollingPercent = message.phase === 'html' ? 5 : Math.min(95, 10 + fetched);
   setProgress(
-    els.collectProgressFill,
-    els.collectProgressText,
+    els.collectProgressFill, els.collectProgressText,
     rollingPercent,
     message.message || `已获取 ${fetched} 条链接`
   );
 });
 
+// ============================
+// Clear cache
+// ============================
 async function clearCurrentCache() {
   if (!state.slug) return;
   await storageRemove([cacheKey(state.slug)]);
@@ -990,6 +1461,9 @@ async function clearCurrentCache() {
   setProgress(els.collectProgressFill, els.collectProgressText, 0, '缓存已清空');
 }
 
+// ============================
+// Event wiring
+// ============================
 els.refreshButton.addEventListener('click', async () => {
   await loadCacheForActiveTab();
   await checkCookie();
@@ -1025,6 +1499,17 @@ els.cancelButton.addEventListener('click', () => {
   state.exportAbortController?.abort();
 });
 
+// Type selector event delegation
+els.typeSelector.addEventListener('click', (event) => {
+  const btn = event.target.closest('.type-btn');
+  if (!btn) return;
+  const type = btn.dataset.type;
+  if (type) switchType(type);
+});
+
+// ============================
+// Initialization
+// ============================
 (async function init() {
   setStatus(els.serviceStatus, 'ZIP 下载', true);
   els.jobStatus.textContent = '当前没有导出任务';

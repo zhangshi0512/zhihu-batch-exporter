@@ -125,6 +125,43 @@ p {
   white-space: nowrap;
 }
 
+.type-selector {
+  display: flex;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 4px;
+}
+
+.type-btn {
+  flex: 1;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+  min-height: 32px;
+  padding: 0 8px;
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease;
+}
+
+.type-btn:hover {
+  background: #edf0f4;
+  color: var(--text);
+}
+
+.type-btn.active {
+  background: var(--blue);
+  color: #fff;
+}
+
+.type-btn.active:hover {
+  background: var(--blue-dark);
+}
+
 .controls {
   display: grid;
   gap: 10px;

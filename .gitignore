@@ -1,5 +1,6 @@
 # === Dependencies ===
 node_modules/
+.workbuddy/
 
 # === Environment variables (contains secrets) ===
 .env
@@ -23,3 +24,4 @@ package-lock.json
 
 # === IDE files ===
 *.txt
+docs/
