@@ -1,4 +1,4 @@
-# Zhihu Answer Batch Exporter / 知乎回答批量导出工具
+# Zhihu Content Batch Exporter / 知乎内容批量导出工具
 
 A two-phase toolkit for scraping all answer URLs from a Zhihu user's profile and exporting each answer's full text content as individual Markdown files. After export, generate an interactive GitHub-style contribution heatmap to visualize writing activity.
 
@@ -31,27 +31,34 @@ It replaces the manual console-copy workflow with Chrome's built-in side panel:
 
 本项目新增了一个可选的 Chrome MV3 扩展（位于 `chrome_extension/` 目录），用 Chrome 内置的侧面板取代手动控制台复制工作流：
 
-- Collect answer URLs from the active Zhihu `/people/...` profile tab. / 从当前知乎个人主页标签页采集回答链接。
-- Display each collected answer with a question title and short answer preview. / 每条回答显示问题标题和简短内容预览。
-- Fill missing answer previews on demand when Zhihu's profile API omits snippets. / 当知乎个人主页 API 缺少摘要时，可手动补全缺失的预览。
+- Collect answer, article, and pin URLs from the active Zhihu `/people/...` profile tab. / 从当前知乎个人主页标签页采集回答、文章和想法链接。
+- Display each collected item with a title and short preview when available. / 每条内容显示标题和简短预览（如可获取）。
+- Fill missing previews on demand when Zhihu's profile API omits snippets. / 当知乎个人主页 API 缺少摘要时，可手动补全缺失的预览。
 - Cache collected URLs per user slug and merge newly collected URLs on later refreshes. / 按用户 slug 缓存已采集链接，后续刷新时合并新增链接。
 - Read the current Zhihu cookie through Chrome's `cookies` permission. / 通过 Chrome 的 `cookies` 权限读取当前知乎登录凭证。
-- Select all, select none, or uncheck individual answer URLs before export. / 支持全选、全不选或单独勾选，灵活选择导出的回答。
+- Select all, select none, or uncheck individual items before export. / 支持全选、全不选或单独勾选，灵活选择导出的内容。
 - Clear the cached URL list when you want to start over. / 可一键清空缓存，重新开始采集。
-- Show progress bars while collecting URLs and exporting selected answers. / 采集链接和导出回答时均显示进度条。
-- Export selected answers as one Markdown `.zip` file through Chrome's download flow. / 将选中的回答导出为一个 Markdown `.zip` 文件，通过 Chrome 下载流程保存。
+- Show progress bars while collecting URLs and exporting selected content. / 采集链接和导出内容时均显示进度条。
+- Export selected items as one Markdown `.zip` file through Chrome's download flow. / 将选中的内容导出为一个 Markdown `.zip` 文件，通过 Chrome 下载流程保存。
 
 No localhost service, Native Messaging host, installer, or PowerShell setup command is required for the extension ZIP workflow.
 
 扩展的 ZIP 导出工作流无需本地服务、Native Messaging 宿主机、安装程序或 PowerShell 设置命令。
 
-### Load the extension / 加载扩展
+### Install from release ZIP / 从发布 ZIP 安装
+
+1. Download `zhihu-content-batch-exporter-chrome-v0.2.0.zip` from the repo release assets, or use the local file in `releases/`. / 从仓库发布附件下载 `zhihu-content-batch-exporter-chrome-v0.2.0.zip`，也可以使用本仓库 `releases/` 目录下的本地文件。
+2. Unzip it to a local folder. / 解压到本地文件夹。
+3. Open `chrome://extensions` and enable **Developer mode**. / 打开 `chrome://extensions` 并启用**开发者模式**。
+4. Click **Load unpacked** and select the unzipped folder. / 点击**加载已解压的扩展程序**，选择解压后的文件夹。
+
+### Load from source / 从源码加载
 
 1. Open `chrome://extensions`. / 打开 `chrome://extensions`。
 2. Enable **Developer mode**. / 启用**开发者模式**。
 3. Click **Load unpacked**. / 点击**加载已解压的扩展程序**。
 4. Select the `chrome_extension/` folder. / 选择 `chrome_extension/` 文件夹。
-5. Open a Zhihu profile answers page, for example `https://www.zhihu.com/people/YOUR_USERNAME/answers`. / 打开知乎个人主页回答页面，例如 `https://www.zhihu.com/people/YOUR_USERNAME/answers`。
+5. Open a Zhihu profile page, for example `https://www.zhihu.com/people/YOUR_USERNAME/answers`, `/posts`, or `/pins`. / 打开知乎个人主页页面，例如 `https://www.zhihu.com/people/YOUR_USERNAME/answers`、`/posts` 或 `/pins`。
 6. Click the extension icon to open the side panel. / 点击扩展图标打开侧面板。
 
 ### Extension workflow / 扩展工作流程
