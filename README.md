@@ -29,35 +29,41 @@ A two-phase toolkit for scraping all answer URLs from a Zhihu user's profile and
 This project now includes an optional Chrome MV3 extension in `chrome_extension/`.
 It replaces the manual console-copy workflow with Chrome's built-in side panel:
 
-- Collect answer URLs from the active Zhihu `/people/...` profile tab.
-- Display each collected answer with a question title and short answer preview.
-- Fill missing answer previews on demand when Zhihu's profile API omits snippets.
-- Cache collected URLs per user slug and merge newly collected URLs on later refreshes.
-- Read the current Zhihu cookie through Chrome's `cookies` permission.
-- Select all, select none, or uncheck individual answer URLs before export.
-- Clear the cached URL list when you want to start over.
-- Show progress bars while collecting URLs and exporting selected answers.
-- Export selected answers as one Markdown `.zip` file through Chrome's download flow.
+本项目新增了一个可选的 Chrome MV3 扩展（位于 `chrome_extension/` 目录），用 Chrome 内置的侧面板取代手动控制台复制工作流：
+
+- Collect answer URLs from the active Zhihu `/people/...` profile tab. / 从当前知乎个人主页标签页采集回答链接。
+- Display each collected answer with a question title and short answer preview. / 每条回答显示问题标题和简短内容预览。
+- Fill missing answer previews on demand when Zhihu's profile API omits snippets. / 当知乎个人主页 API 缺少摘要时，可手动补全缺失的预览。
+- Cache collected URLs per user slug and merge newly collected URLs on later refreshes. / 按用户 slug 缓存已采集链接，后续刷新时合并新增链接。
+- Read the current Zhihu cookie through Chrome's `cookies` permission. / 通过 Chrome 的 `cookies` 权限读取当前知乎登录凭证。
+- Select all, select none, or uncheck individual answer URLs before export. / 支持全选、全不选或单独勾选，灵活选择导出的回答。
+- Clear the cached URL list when you want to start over. / 可一键清空缓存，重新开始采集。
+- Show progress bars while collecting URLs and exporting selected answers. / 采集链接和导出回答时均显示进度条。
+- Export selected answers as one Markdown `.zip` file through Chrome's download flow. / 将选中的回答导出为一个 Markdown `.zip` 文件，通过 Chrome 下载流程保存。
 
 No localhost service, Native Messaging host, installer, or PowerShell setup command is required for the extension ZIP workflow.
 
-### Load the extension
+扩展的 ZIP 导出工作流无需本地服务、Native Messaging 宿主机、安装程序或 PowerShell 设置命令。
 
-1. Open `chrome://extensions`.
-2. Enable **Developer mode**.
-3. Click **Load unpacked**.
-4. Select the `chrome_extension/` folder.
-5. Open a Zhihu profile answers page, for example `https://www.zhihu.com/people/YOUR_USERNAME/answers`.
-6. Click the extension icon to open the side panel.
+### Load the extension / 加载扩展
 
-### Extension workflow
+1. Open `chrome://extensions`. / 打开 `chrome://extensions`。
+2. Enable **Developer mode**. / 启用**开发者模式**。
+3. Click **Load unpacked**. / 点击**加载已解压的扩展程序**。
+4. Select the `chrome_extension/` folder. / 选择 `chrome_extension/` 文件夹。
+5. Open a Zhihu profile answers page, for example `https://www.zhihu.com/people/YOUR_USERNAME/answers`. / 打开知乎个人主页回答页面，例如 `https://www.zhihu.com/people/YOUR_USERNAME/answers`。
+6. Click the extension icon to open the side panel. / 点击扩展图标打开侧面板。
 
-1. Click **Collect / Refresh URLs**. Cached URLs are kept and newly discovered URLs are added with question titles and answer snippets when Zhihu returns them.
-2. If many rows still lack snippets, click **Fill previews**. This fetches missing previews by answer ID and updates the cache.
-3. Use **Select all**, **Select none**, or individual checkboxes to choose the export set. Use **Clear cache** when you want to start over.
-4. Click **Download ZIP**. The side panel fetches selected answers, converts them to Markdown, packages them into one ZIP, and asks Chrome to download it. Chrome may show a save dialog depending on browser settings.
+### Extension workflow / 扩展工作流程
+
+1. Click **Collect / Refresh URLs**. Cached URLs are kept and newly discovered URLs are added with question titles and answer snippets when Zhihu returns them. / 点击**采集 / 刷新链接**。已有缓存的链接被保留，知乎返回的新链接将自动添加问题标题和回答摘要。
+2. If many rows still lack snippets, click **Fill previews**. This fetches missing previews by answer ID and updates the cache. / 如果很多行缺少预览内容，点击**补全预览**。工具将按回答 ID 逐个获取缺失的预览并更新缓存。
+3. Use **Select all**, **Select none**, or individual checkboxes to choose the export set. Use **Clear cache** when you want to start over. / 使用**全选**、**全不选**或逐条勾选来确定导出范围。需要重新开始时使用**清空缓存**。
+4. Click **Download ZIP**. The side panel fetches selected answers, converts them to Markdown, packages them into one ZIP, and asks Chrome to download it. Chrome may show a save dialog depending on browser settings. / 点击**下载 ZIP**。侧面板逐个抓取选中的回答，转换为 Markdown 格式，打包为一个 ZIP 文件，通过 Chrome 下载流程保存（可能弹出保存对话框，取决于浏览器设置）。
 
 Note: Zhihu's profile answer count can be higher than the number returned by `/api/v4/members/{slug}/answers`. Deleted, hidden, anonymous, private, or otherwise unavailable answers may be included in the account-level count but not returned as exportable profile answer URLs.
+
+注意：知乎个人主页显示的回答总数可能高于 `/api/v4/members/{slug}/answers` 接口返回的数量。已删除、隐藏、匿名、私密或其他不可用的回答会计入账户级总数，但不会作为可导出的回答链接返回。
 
 ---
 
