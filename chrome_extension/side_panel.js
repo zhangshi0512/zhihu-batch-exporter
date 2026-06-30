@@ -1098,6 +1098,23 @@ function extractContent(url, pageHtml) {
     const millis = Date.parse(value);
     return Number.isNaN(millis) ? null : Math.floor(millis / 1000);
   };
+  const parseDisplayedAnswerTime = () => {
+    if (state.currentType !== 'answers') return null;
+    const links = [...doc.querySelectorAll('.ContentItem-time a[href*="/answer/"]')];
+    const timeLink = links.find((link) => {
+      const href = link.getAttribute('href') || '';
+      return new RegExp(`/answer/${ids.id}(?:$|[?#])`).test(href);
+    });
+    const label = timeLink?.getAttribute('aria-label')
+      || timeLink?.getAttribute('data-tooltip')
+      || timeLink?.textContent
+      || '';
+    const match = label.match(/(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})(?::(\d{2}))?/);
+    if (!match) return null;
+    const [, year, month, day, hour, minute, second = '0'] = match;
+    const localDate = new Date(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second));
+    return Number.isNaN(localDate.getTime()) ? null : Math.floor(localDate.getTime() / 1000);
+  };
   const parseCount = (value) => {
     if (value === '' || value == null) return null;
     const number = Number(String(value).replace(/,/g, ''));
@@ -1139,6 +1156,8 @@ function extractContent(url, pageHtml) {
   for (const field of ['createdTime', 'updatedTime', 'voteCount', 'likeCount', 'favoriteCount', 'commentCount', 'thanksCount']) {
     metadata[field] = fromData?.[field] ?? fromDOM?.[field] ?? null;
   }
+  const displayedAnswerTime = parseDisplayedAnswerTime();
+  if (displayedAnswerTime != null) metadata.createdTime = displayedAnswerTime;
 
   // Synthesize title for types without one
   const finalTitle = chosen.title || `${config.defaultName}${ids.id}`;
