@@ -679,7 +679,9 @@ async function scrapeContentFromPage(type, runId) {
       snippet: clean(item.snippet || previous.snippet || '', 260),
       contentHtml: item.contentHtml || previous.contentHtml || '',
       author: item.author || previous.author || '',
-      createdTime: item.createdTime || previous.createdTime || null,
+      // DOM-visible publish time is collected before API pagination and is the
+      // user-facing source of truth. Do not overwrite it with API timestamps.
+      createdTime: previous.createdTime ?? item.createdTime ?? null,
       updatedTime: item.updatedTime || previous.updatedTime || null,
       voteCount: item.voteCount ?? previous.voteCount ?? null,
       likeCount: item.likeCount ?? previous.likeCount ?? null,
@@ -700,6 +702,25 @@ async function scrapeContentFromPage(type, runId) {
     return container?.querySelector(config.domTitleSelector)?.textContent || anchor?.textContent || fallback;
   };
 
+  const displayedPublishTimeFromContainer = (container, url) => {
+    if (!container || !url) return null;
+    const id = url.match(/\/(?:p|pin|answer)\/(\d+)/)?.[1];
+    if (!id) return null;
+    const timeLink = [...container.querySelectorAll('.ContentItem-time a')].find((link) => {
+      const href = link.getAttribute('href') || '';
+      return new RegExp(`/(?:p|pin|answer)/${id}/?(?:$|[?#])`).test(href);
+    });
+    const label = timeLink?.getAttribute('aria-label')
+      || timeLink?.getAttribute('data-tooltip')
+      || timeLink?.textContent
+      || '';
+    const match = label.match(/(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})(?::(\d{2}))?/);
+    if (!match) return null;
+    const [, year, month, day, hour, minute, second = '0'] = match;
+    const localDate = new Date(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second));
+    return Number.isNaN(localDate.getTime()) ? null : Math.floor(localDate.getTime() / 1000);
+  };
+
   // DOM sniffing: find visible links on the current page.
   document.querySelectorAll(config.domLinkSelector).forEach((anchor) => {
     const url = config.domLinkNormalizer(anchor.getAttribute('href') || '');
@@ -711,6 +732,7 @@ async function scrapeContentFromPage(type, runId) {
       url,
       title: titleFromContainer(container, anchor, config.domTitleSelector ? '' : `${config.label}${id}`),
       snippet: snippetEl?.textContent || '',
+      createdTime: displayedPublishTimeFromContainer(container, url),
     });
   });
 
@@ -726,6 +748,7 @@ async function scrapeContentFromPage(type, runId) {
       url,
       title: titleFromContainer(container, null, data?.title || `${config.label}${id}`),
       snippet: snippetEl?.textContent || '',
+      createdTime: displayedPublishTimeFromContainer(container, url),
     });
   });
 
@@ -1098,12 +1121,20 @@ function extractContent(url, pageHtml) {
     const millis = Date.parse(value);
     return Number.isNaN(millis) ? null : Math.floor(millis / 1000);
   };
-  const parseDisplayedAnswerTime = () => {
-    if (state.currentType !== 'answers') return null;
-    const links = [...doc.querySelectorAll('.ContentItem-time a[href*="/answer/"]')];
+  const parseDisplayedPublishTime = () => {
+    const pathPrefix = state.currentType === 'answers'
+      ? '/answer/'
+      : state.currentType === 'articles'
+        ? '/p/'
+        : state.currentType === 'pins'
+          ? '/pin/'
+          : '';
+    if (!pathPrefix) return null;
+    const links = [...doc.querySelectorAll(`.ContentItem-time a[href*="${pathPrefix}"]`)];
     const timeLink = links.find((link) => {
       const href = link.getAttribute('href') || '';
-      return new RegExp(`/answer/${ids.id}(?:$|[?#])`).test(href);
+      const escapedPrefix = pathPrefix.replace(/\//g, '\\/');
+      return new RegExp(`${escapedPrefix}${ids.id}/?(?:$|[?#])`).test(href);
     });
     const label = timeLink?.getAttribute('aria-label')
       || timeLink?.getAttribute('data-tooltip')
@@ -1156,8 +1187,8 @@ function extractContent(url, pageHtml) {
   for (const field of ['createdTime', 'updatedTime', 'voteCount', 'likeCount', 'favoriteCount', 'commentCount', 'thanksCount']) {
     metadata[field] = fromData?.[field] ?? fromDOM?.[field] ?? null;
   }
-  const displayedAnswerTime = parseDisplayedAnswerTime();
-  if (displayedAnswerTime != null) metadata.createdTime = displayedAnswerTime;
+  const displayedPublishTime = parseDisplayedPublishTime();
+  if (displayedPublishTime != null) metadata.createdTime = displayedPublishTime;
 
   // Synthesize title for types without one
   const finalTitle = chosen.title || `${config.defaultName}${ids.id}`;
