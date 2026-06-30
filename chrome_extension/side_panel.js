@@ -14,7 +14,7 @@ const CONTENT_TYPES = {
     supportsTruncated: true,
     // API
     apiEndpoint: (slug) => `/api/v4/members/${encodeURIComponent(slug)}/answers`,
-    apiInclude: ['data[*].id', 'data[*].url', 'data[*].question.id', 'data[*].question.title', 'data[*].question.url', 'data[*].excerpt', 'data[*].excerpt_new', 'data[*].summary', 'data[*].content'],
+    apiInclude: ['data[*].id', 'data[*].url', 'data[*].question.id', 'data[*].question.title', 'data[*].question.url', 'data[*].excerpt', 'data[*].excerpt_new', 'data[*].summary', 'data[*].content', 'data[*].created_time', 'data[*].updated_time', 'data[*].voteup_count', 'data[*].comment_count', 'data[*].thanks_count', 'data[*].favorite_count'],
     apiSortBy: 'created',
     // DOM sniffing on profile page
     domLinkSelector: 'a[href*="/question/"][href*="/answer/"]',
@@ -34,6 +34,14 @@ const CONTENT_TYPES = {
     },
     apiItemToTitle: (item) => item?.question?.title || '',
     apiItemToSnippet: (item) => item?.excerpt || item?.excerpt_new || item?.summary || item?.content || '',
+    apiItemToExtraFields: (item) => ({
+      createdTime: item?.created_time ?? null,
+      updatedTime: item?.updated_time ?? null,
+      voteCount: item?.voteup_count ?? item?.upvote_count ?? null,
+      commentCount: item?.comment_count ?? null,
+      favoriteCount: item?.favorite_count ?? item?.favlists_count ?? null,
+      thanksCount: item?.thanks_count ?? null,
+    }),
     // URL filter for cached items
     urlFilter: (url) => url.startsWith('https://www.zhihu.com/question/'),
     // Content extraction
@@ -44,6 +52,13 @@ const CONTENT_TYPES = {
     initialDataAuthor: (data) => data?.author?.name || '知乎用户',
     initialDataCreated: (data) => data?.created_time || null,
     initialDataUpdated: (data) => data?.updated_time || null,
+    initialDataMetadata: (data) => ({
+      voteCount: data?.voteup_count ?? data?.upvoteCount ?? null,
+      likeCount: data?.liked_count ?? data?.likeCount ?? null,
+      favoriteCount: data?.favorite_count ?? data?.favlistsCount ?? null,
+      commentCount: data?.comment_count ?? data?.commentCount ?? null,
+      thanksCount: data?.thanks_count ?? data?.thanksCount ?? null,
+    }),
     initialDataSupplementHtml: () => '',
     // Hydrate API
     hydrateApiUrl: (id) => `/api/v4/answers/${id}?include=` + encodeURIComponent(['content', 'excerpt', 'excerpt_new', 'summary', 'question.title'].join(',')),
@@ -84,7 +99,14 @@ const CONTENT_TYPES = {
     },
     apiItemToTitle: (item) => item?.title || '',
     apiItemToSnippet: (item) => item?.excerpt || item?.content || '',
-    apiItemToExtraFields: () => ({}),
+    apiItemToExtraFields: (item) => ({
+      createdTime: item?.created ?? null,
+      updatedTime: item?.updated ?? null,
+      voteCount: item?.voteupCount ?? item?.voteup_count ?? null,
+      likeCount: item?.likedCount ?? item?.liked_count ?? item?.emojiReaction?.likeCount ?? null,
+      favoriteCount: item?.favlistsCount ?? item?.favorite_count ?? null,
+      commentCount: item?.commentCount ?? item?.comment_count ?? null,
+    }),
     urlFilter: (url) => url.startsWith('https://zhuanlan.zhihu.com/p/'),
     initialDataEntity: 'articles',
     initialDataIdFromUrl: (url) => { const m = url.match(/zhuanlan\.zhihu\.com\/p\/(\d+)/); return m ? m[1] : ''; },
@@ -93,6 +115,13 @@ const CONTENT_TYPES = {
     initialDataAuthor: (data) => data?.author?.name || '知乎用户',
     initialDataCreated: (data) => data?.created || null,
     initialDataUpdated: (data) => data?.updated || null,
+    initialDataMetadata: (data) => ({
+      voteCount: data?.voteupCount ?? data?.voteup_count ?? null,
+      likeCount: data?.likedCount ?? data?.liked_count ?? data?.emojiReaction?.likeCount ?? null,
+      favoriteCount: data?.favlistsCount ?? data?.favorite_count ?? null,
+      commentCount: data?.commentCount ?? data?.comment_count ?? null,
+      thanksCount: null,
+    }),
     initialDataSupplementHtml: () => '',
     hydrateApiUrl: () => null,
     hydrateParseResponse: () => null,
@@ -155,6 +184,11 @@ const CONTENT_TYPES = {
         author: item?.author?.name || '知乎用户',
         createdTime: item?.created || null,
         updatedTime: item?.updated || null,
+        voteCount: item?.voteupCount ?? item?.voteup_count ?? null,
+        likeCount: item?.likedCount ?? item?.liked_count ?? item?.likeCount ?? null,
+        favoriteCount: item?.favlistsCount ?? item?.favorite_count ?? null,
+        commentCount: item?.commentCount ?? item?.comment_count ?? null,
+        thanksCount: item?.thanksCount ?? item?.thanks_count ?? null,
       };
     },
     urlFilter: (url) => url.startsWith('https://www.zhihu.com/pin/'),
@@ -184,6 +218,13 @@ const CONTENT_TYPES = {
     },
     initialDataCreated: (data) => data?.created || null,
     initialDataUpdated: (data) => data?.updated || null,
+    initialDataMetadata: (data) => ({
+      voteCount: data?.voteupCount ?? data?.voteup_count ?? null,
+      likeCount: data?.likedCount ?? data?.liked_count ?? data?.likeCount ?? null,
+      favoriteCount: data?.favlistsCount ?? data?.favorite_count ?? null,
+      commentCount: data?.commentCount ?? data?.comment_count ?? null,
+      thanksCount: data?.thanksCount ?? data?.thanks_count ?? null,
+    }),
     initialDataSupplementHtml: (data) => '',
     hydrateApiUrl: () => null,
     hydrateParseResponse: () => null,
@@ -345,7 +386,7 @@ function normalizeItems(rawItems) {
   return (rawItems || [])
     .map((item) => {
       if (typeof item === 'string') {
-        return { url: item, title: '', snippet: '', contentHtml: '', author: '', createdTime: null, updatedTime: null };
+        return { url: item, title: '', snippet: '', contentHtml: '', author: '', createdTime: null, updatedTime: null, voteCount: null, likeCount: null, favoriteCount: null, commentCount: null, thanksCount: null };
       }
       return {
         url: String(item?.url || '').trim(),
@@ -355,6 +396,11 @@ function normalizeItems(rawItems) {
         author: item?.author || '',
         createdTime: item?.createdTime || null,
         updatedTime: item?.updatedTime || null,
+        voteCount: item?.voteCount ?? null,
+        likeCount: item?.likeCount ?? null,
+        favoriteCount: item?.favoriteCount ?? null,
+        commentCount: item?.commentCount ?? null,
+        thanksCount: item?.thanksCount ?? null,
       };
     })
     .filter((item) => config.urlFilter(item.url));
@@ -373,6 +419,11 @@ function mergeItems(existingItems, incomingItems) {
       author: item.author || previous.author || '',
       createdTime: item.createdTime || previous.createdTime || null,
       updatedTime: item.updatedTime || previous.updatedTime || null,
+      voteCount: item.voteCount ?? previous.voteCount ?? null,
+      likeCount: item.likeCount ?? previous.likeCount ?? null,
+      favoriteCount: item.favoriteCount ?? previous.favoriteCount ?? null,
+      commentCount: item.commentCount ?? previous.commentCount ?? null,
+      thanksCount: item.thanksCount ?? previous.thanksCount ?? null,
     });
   });
   return [...map.values()];
@@ -459,7 +510,7 @@ async function scrapeContentFromPage(type, runId) {
     answers: {
       label: '回答',
       apiEndpoints: [(slug) => `/api/v4/members/${encodeURIComponent(slug)}/answers`],
-      apiInclude: ['data[*].id', 'data[*].url', 'data[*].question.id', 'data[*].question.title', 'data[*].question.url', 'data[*].excerpt', 'data[*].excerpt_new', 'data[*].summary', 'data[*].content'],
+      apiInclude: ['data[*].id', 'data[*].url', 'data[*].question.id', 'data[*].question.title', 'data[*].question.url', 'data[*].excerpt', 'data[*].excerpt_new', 'data[*].summary', 'data[*].content', 'data[*].created_time', 'data[*].updated_time', 'data[*].voteup_count', 'data[*].comment_count', 'data[*].thanks_count', 'data[*].favorite_count'],
       apiSortBy: 'created',
       domLinkSelector: 'a[href*="/question/"][href*="/answer/"]',
       domItemSelector: '.List-item, .ContentItem, .AnswerItem',
@@ -479,7 +530,14 @@ async function scrapeContentFromPage(type, runId) {
       },
       apiItemToTitle: (item) => item?.question?.title || '',
       apiItemToSnippet: (item) => item?.excerpt || item?.excerpt_new || item?.summary || item?.content || '',
-      apiItemToExtraFields: () => ({}),
+      apiItemToExtraFields: (item) => ({
+        createdTime: item?.created_time ?? null,
+        updatedTime: item?.updated_time ?? null,
+        voteCount: item?.voteup_count ?? item?.upvote_count ?? null,
+        commentCount: item?.comment_count ?? null,
+        favoriteCount: item?.favorite_count ?? item?.favlists_count ?? null,
+        thanksCount: item?.thanks_count ?? null,
+      }),
       domItemToUrl: () => '',
     },
     articles: {
@@ -510,7 +568,14 @@ async function scrapeContentFromPage(type, runId) {
       },
       apiItemToTitle: (item) => item?.title || '',
       apiItemToSnippet: (item) => item?.excerpt || item?.summary || item?.content || '',
-      apiItemToExtraFields: () => ({}),
+      apiItemToExtraFields: (item) => ({
+        createdTime: item?.created ?? null,
+        updatedTime: item?.updated ?? null,
+        voteCount: item?.voteupCount ?? item?.voteup_count ?? null,
+        likeCount: item?.likedCount ?? item?.liked_count ?? item?.emojiReaction?.likeCount ?? null,
+        favoriteCount: item?.favlistsCount ?? item?.favorite_count ?? null,
+        commentCount: item?.commentCount ?? item?.comment_count ?? null,
+      }),
       domItemToUrl: (data) => data?.type === 'article' && data?.itemId ? `https://zhuanlan.zhihu.com/p/${data.itemId}` : '',
     },
     pins: {
@@ -562,6 +627,11 @@ async function scrapeContentFromPage(type, runId) {
           author: item?.author?.name || '知乎用户',
           createdTime: item?.created || null,
           updatedTime: item?.updated || null,
+          voteCount: item?.voteupCount ?? item?.voteup_count ?? null,
+          likeCount: item?.likedCount ?? item?.liked_count ?? item?.likeCount ?? null,
+          favoriteCount: item?.favlistsCount ?? item?.favorite_count ?? null,
+          commentCount: item?.commentCount ?? item?.comment_count ?? null,
+          thanksCount: item?.thanksCount ?? item?.thanks_count ?? null,
         };
       },
       domItemToUrl: (data) => data?.type === 'pin' && data?.itemId ? `https://www.zhihu.com/pin/${data.itemId}` : '',
@@ -611,6 +681,11 @@ async function scrapeContentFromPage(type, runId) {
       author: item.author || previous.author || '',
       createdTime: item.createdTime || previous.createdTime || null,
       updatedTime: item.updatedTime || previous.updatedTime || null,
+      voteCount: item.voteCount ?? previous.voteCount ?? null,
+      likeCount: item.likeCount ?? previous.likeCount ?? null,
+      favoriteCount: item.favoriteCount ?? previous.favoriteCount ?? null,
+      commentCount: item.commentCount ?? previous.commentCount ?? null,
+      thanksCount: item.thanksCount ?? previous.thanksCount ?? null,
     });
   };
 
@@ -1002,6 +1077,7 @@ function extractContent(url, pageHtml) {
           author: base.author || '知乎用户',
           createdTime: config.initialDataCreated(entityData),
           updatedTime: config.initialDataUpdated(entityData),
+          ...(config.initialDataMetadata ? config.initialDataMetadata(entityData) : {}),
         };
       }
     } catch {
@@ -1016,6 +1092,17 @@ function extractContent(url, pageHtml) {
   const titleEl = sel.title ? (doc.querySelector(sel.title) || doc.querySelector('title')) : null;
   const authorEl = sel.author ? doc.querySelector(sel.author) : null;
   const elementText = (el) => el?.getAttribute?.('content') || el?.textContent || '';
+  const metaContent = (itemprop) => doc.querySelector(`meta[itemprop="${itemprop}"]`)?.getAttribute('content') || '';
+  const parseDateSeconds = (value) => {
+    if (!value) return null;
+    const millis = Date.parse(value);
+    return Number.isNaN(millis) ? null : Math.floor(millis / 1000);
+  };
+  const parseCount = (value) => {
+    if (value === '' || value == null) return null;
+    const number = Number(String(value).replace(/,/g, ''));
+    return Number.isFinite(number) ? number : null;
+  };
 
   if (contentEl) {
     let title = '';
@@ -1028,8 +1115,13 @@ function extractContent(url, pageHtml) {
       title,
       author: authorEl ? cleanText(elementText(authorEl) || '知乎用户', 120) : '知乎用户',
       html: contentEl.innerHTML,
-      createdTime: null,
-      updatedTime: null,
+      createdTime: parseDateSeconds(metaContent('dateCreated') || metaContent('datePublished')),
+      updatedTime: parseDateSeconds(metaContent('dateModified')),
+      voteCount: parseCount(metaContent('upvoteCount') || metaContent('voteupCount')),
+      likeCount: parseCount(metaContent('likeCount')),
+      favoriteCount: parseCount(metaContent('favoriteCount') || metaContent('favlistsCount')),
+      commentCount: parseCount(metaContent('commentCount')),
+      thanksCount: parseCount(metaContent('thanksCount') || metaContent('thankedCount')),
     };
   }
 
@@ -1043,6 +1135,11 @@ function extractContent(url, pageHtml) {
 
   if (!chosen?.html) return null;
 
+  const metadata = {};
+  for (const field of ['createdTime', 'updatedTime', 'voteCount', 'likeCount', 'favoriteCount', 'commentCount', 'thanksCount']) {
+    metadata[field] = fromData?.[field] ?? fromDOM?.[field] ?? null;
+  }
+
   // Synthesize title for types without one
   const finalTitle = chosen.title || `${config.defaultName}${ids.id}`;
 
@@ -1053,8 +1150,7 @@ function extractContent(url, pageHtml) {
     title: finalTitle,
     author: chosen.author || '知乎用户',
     html: chosen.html,
-    createdTime: chosen.createdTime || null,
-    updatedTime: chosen.updatedTime || null,
+    ...metadata,
   };
 }
 
@@ -1136,7 +1232,17 @@ function formatTimestamp(ts) {
   const date = new Date(ts * 1000);
   if (Number.isNaN(date.getTime())) return '';
   const pad = (value) => String(value).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  const offsetMinutes = -date.getTimezoneOffset();
+  const sign = offsetMinutes >= 0 ? '+' : '-';
+  const absoluteOffset = Math.abs(offsetMinutes);
+  const offset = `${sign}${pad(Math.floor(absoluteOffset / 60))}:${pad(absoluteOffset % 60)}`;
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}${offset}`;
+}
+
+function formatUtcTimestamp(ts) {
+  if (!ts) return '';
+  const date = new Date(ts * 1000);
+  return Number.isNaN(date.getTime()) ? '' : date.toISOString();
 }
 
 // ============================
@@ -1157,7 +1263,20 @@ function buildMarkdown(data) {
   const created = formatTimestamp(data.createdTime);
   const updated = formatTimestamp(data.updatedTime);
   if (created) lines.push(`created: "${created}"`);
+  const createdUtc = formatUtcTimestamp(data.createdTime);
+  if (createdUtc) lines.push(`created_utc: "${createdUtc}"`);
   if (updated) lines.push(`updated: "${updated}"`);
+  const updatedUtc = formatUtcTimestamp(data.updatedTime);
+  if (updatedUtc) lines.push(`updated_utc: "${updatedUtc}"`);
+  for (const [key, field] of [
+    ['vote_count', 'voteCount'],
+    ['like_count', 'likeCount'],
+    ['favorite_count', 'favoriteCount'],
+    ['comment_count', 'commentCount'],
+    ['thanks_count', 'thanksCount'],
+  ]) {
+    lines.push(`${key}: ${data[field] == null ? 'null' : Number(data[field])}`);
+  }
   lines.push(`downloaded: "${new Date().toISOString().slice(0, 10)}"`, '---', '');
   lines.push(`# ${data.title}`, '', htmlToMarkdown(data.html), '');
   return lines.join('\n');
@@ -1314,6 +1433,11 @@ async function exportSelectedZip() {
             html: item.contentHtml,
             createdTime: item.createdTime || null,
             updatedTime: item.updatedTime || null,
+            voteCount: item.voteCount ?? null,
+            likeCount: item.likeCount ?? null,
+            favoriteCount: item.favoriteCount ?? null,
+            commentCount: item.commentCount ?? null,
+            thanksCount: item.thanksCount ?? null,
           };
           const markdown = buildMarkdown(content);
           files.push({ name: `${config.folderName}/${buildFilename(content)}`, data: markdown });
@@ -1332,6 +1456,11 @@ async function exportSelectedZip() {
           if (!response.ok) throw new Error(`请求失败：HTTP ${response.status}`);
           const html = await response.text();
           const content = extractContent(item.url, html);
+          if (content) {
+            for (const field of ['createdTime', 'updatedTime', 'voteCount', 'likeCount', 'favoriteCount', 'commentCount', 'thanksCount']) {
+              content[field] = content[field] ?? item[field] ?? null;
+            }
+          }
           if (!content) throw new Error(`无法提取${config.label}内容。`);
           const markdown = buildMarkdown(content);
           files.push({ name: `${config.folderName}/${buildFilename(content)}`, data: markdown });
