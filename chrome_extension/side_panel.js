@@ -259,8 +259,12 @@ const els = {
   jobCounts: document.getElementById('jobCounts'),
   exportProgressText: document.getElementById('exportProgressText'),
   exportProgressFill: document.getElementById('exportProgressFill'),
+  exportProgressBlock: document.getElementById('exportProgressBlock'),
   jobLog: document.getElementById('jobLog'),
   typeSelector: document.getElementById('typeSelector'),
+  dateFilterFrom: document.getElementById('dateFilterFrom'),
+  dateFilterTo: document.getElementById('dateFilterTo'),
+  clearDateFilterButton: document.getElementById('clearDateFilterButton'),
 };
 
 // ============================
@@ -277,6 +281,8 @@ const state = {
   remoteTotal: null,
   collectRunId: '',
   exportAbortController: null,
+  dateFilterFrom: '',
+  dateFilterTo: '',
 };
 
 // ============================
@@ -351,6 +357,67 @@ function setProgress(fillEl, textEl, value, text) {
   fillEl.style.width = `${percent}%`;
   fillEl.parentElement?.setAttribute('aria-valuenow', String(percent));
   textEl.textContent = text || `${percent}%`;
+}
+
+function setExportProgressVisible(visible) {
+  els.exportProgressBlock.hidden = !visible;
+}
+
+function dateInputToStartSeconds(value) {
+  if (!value) return null;
+  const date = new Date(`${value}T00:00:00`);
+  return Number.isNaN(date.getTime()) ? null : Math.floor(date.getTime() / 1000);
+}
+
+function dateInputToEndSeconds(value) {
+  if (!value) return null;
+  const date = new Date(`${value}T23:59:59`);
+  return Number.isNaN(date.getTime()) ? null : Math.floor(date.getTime() / 1000);
+}
+
+function hasDateFilter() {
+  return Boolean(state.dateFilterFrom || state.dateFilterTo);
+}
+
+function itemMatchesDateFilter(item) {
+  if (!hasDateFilter()) return true;
+  if (!item.createdTime) return false;
+  const fromTs = dateInputToStartSeconds(state.dateFilterFrom);
+  const toTs = dateInputToEndSeconds(state.dateFilterTo);
+  if (fromTs != null && item.createdTime < fromTs) return false;
+  if (toTs != null && item.createdTime > toTs) return false;
+  return true;
+}
+
+function filteredItems() {
+  return state.items.filter(itemMatchesDateFilter);
+}
+
+function formatCreatedDate(ts) {
+  if (!ts) return '';
+  const date = new Date(ts * 1000);
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function syncDateFilterInputs() {
+  els.dateFilterFrom.value = state.dateFilterFrom;
+  els.dateFilterTo.value = state.dateFilterTo;
+}
+
+function applyDateFilterFromInputs() {
+  state.dateFilterFrom = els.dateFilterFrom.value;
+  state.dateFilterTo = els.dateFilterTo.value;
+  if (state.dateFilterFrom && state.dateFilterTo && state.dateFilterFrom > state.dateFilterTo) {
+    [state.dateFilterFrom, state.dateFilterTo] = [state.dateFilterTo, state.dateFilterFrom];
+    syncDateFilterInputs();
+  }
+  renderUrls();
 }
 
 function appendLog(message) {
@@ -489,6 +556,9 @@ async function loadCacheForActiveTab() {
 async function switchType(type) {
   if (type === state.currentType) return;
   state.currentType = type;
+  state.dateFilterFrom = '';
+  state.dateFilterTo = '';
+  syncDateFilterInputs();
   // Update button states
   document.querySelectorAll('.type-btn').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.type === type);
@@ -1435,7 +1505,8 @@ function downloadBlob(blob, filename) {
 }
 
 function selectedItems() {
-  return state.items.filter((item) => state.selected.has(item.url));
+  const visibleUrls = new Set(filteredItems().map((item) => item.url));
+  return state.items.filter((item) => state.selected.has(item.url) && visibleUrls.has(item.url));
 }
 
 // ============================
@@ -1457,6 +1528,7 @@ async function exportSelectedZip() {
   els.jobLog.textContent = '';
   els.jobStatus.textContent = '正在导出 ZIP...';
   els.jobCounts.textContent = `0 / ${items.length}`;
+  setExportProgressVisible(true);
   setProgress(els.exportProgressFill, els.exportProgressText, 0, `0 / ${items.length}`);
 
   const config = currentConfig();
@@ -1550,6 +1622,7 @@ async function exportSelectedZip() {
   } finally {
     state.exportAbortController = null;
     els.cancelButton.disabled = true;
+    setExportProgressVisible(false);
     renderSelection();
   }
 }
@@ -1559,6 +1632,7 @@ async function exportSelectedZip() {
 // ============================
 function renderUrls() {
   const config = currentConfig();
+  const visibleItems = filteredItems();
   els.cacheStatus.textContent = state.remoteTotal
     ? `${state.items.length} / ${state.remoteTotal}`
     : `${state.items.length} 条`;
@@ -1570,17 +1644,27 @@ function renderUrls() {
     return;
   }
 
-  els.urlList.innerHTML = state.items
-    .map((item, index) => {
+  if (visibleItems.length === 0) {
+    els.urlList.innerHTML = `<div class="empty">没有符合时间筛选条件的${config.label}。</div>`;
+    renderSelection();
+    return;
+  }
+
+  els.urlList.innerHTML = visibleItems
+    .map((item) => {
+      const index = state.items.findIndex((entry) => entry.url === item.url);
       const checked = state.selected.has(item.url) ? 'checked' : '';
       const title = item.title || `未命名知乎${config.label}`;
       const snippet = item.snippet || `还没有采集到预览内容。可点击"补全预览"。`;
+      const createdLabel = formatCreatedDate(item.createdTime);
+      const metaText = createdLabel ? `发布于 ${createdLabel}` : '发布时间未知';
       return `
         <label class="url-item">
           <input type="checkbox" data-index="${index}" ${checked}>
           <span class="url-content">
             <strong class="url-title">${escapeHtml(title)}</strong>
             <span class="url-snippet">${escapeHtml(snippet)}</span>
+            <span class="url-meta">${escapeHtml(metaText)}</span>
             <span class="url-text">${escapeHtml(item.url)}</span>
           </span>
         </label>
@@ -1592,8 +1676,11 @@ function renderUrls() {
 
 function renderSelection() {
   const exporting = Boolean(state.exportAbortController);
-  els.selectedCount.textContent = `已选择 ${state.selected.size} 条`;
-  els.exportButton.disabled = state.selected.size === 0 || exporting;
+  const visibleItems = filteredItems();
+  const selectedVisible = visibleItems.filter((item) => state.selected.has(item.url)).length;
+  const filterHint = hasDateFilter() ? `（筛选后 ${visibleItems.length} 条）` : '';
+  els.selectedCount.textContent = `已选择 ${selectedVisible} / ${visibleItems.length} 条${filterHint}`;
+  els.exportButton.disabled = selectedVisible === 0 || exporting;
   els.hydrateButton.disabled = state.items.length === 0 || exporting;
   els.clearCacheButton.disabled = state.items.length === 0 || exporting;
   els.cancelButton.disabled = !exporting;
@@ -1652,7 +1739,7 @@ els.collectButton.addEventListener('click', collectUrls);
 els.hydrateButton.addEventListener('click', hydrateMissingPreviews);
 
 els.selectAllButton.addEventListener('click', () => {
-  state.selected = new Set(itemUrls(state.items));
+  filteredItems().forEach((item) => state.selected.add(item.url));
   renderUrls();
 });
 
@@ -1662,6 +1749,15 @@ els.selectNoneButton.addEventListener('click', () => {
 });
 
 els.clearCacheButton.addEventListener('click', clearCurrentCache);
+
+els.dateFilterFrom.addEventListener('change', applyDateFilterFromInputs);
+els.dateFilterTo.addEventListener('change', applyDateFilterFromInputs);
+els.clearDateFilterButton.addEventListener('click', () => {
+  state.dateFilterFrom = '';
+  state.dateFilterTo = '';
+  syncDateFilterInputs();
+  renderUrls();
+});
 
 els.urlList.addEventListener('change', (event) => {
   const input = event.target;
@@ -1693,6 +1789,8 @@ els.typeSelector.addEventListener('click', (event) => {
   setStatus(els.serviceStatus, 'ZIP 下载', true);
   els.jobStatus.textContent = '当前没有导出任务';
   els.cancelButton.disabled = true;
+  setExportProgressVisible(false);
+  syncDateFilterInputs();
   await loadCacheForActiveTab();
   await checkCookie();
 })();

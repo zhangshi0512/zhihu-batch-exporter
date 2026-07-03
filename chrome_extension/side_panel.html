@@ -16,6 +16,16 @@
         <button id="refreshButton" class="icon-button" title="刷新状态" aria-label="刷新状态">刷</button>
       </header>
 
+      <section class="progress-block export-progress-top" id="exportProgressBlock" hidden>
+        <div class="progress-header">
+          <span id="exportProgressLabel">导出进度</span>
+          <strong id="exportProgressText">0 / 0</strong>
+        </div>
+        <div class="progress-track" role="progressbar" aria-label="导出进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <div id="exportProgressFill" class="progress-fill"></div>
+        </div>
+      </section>
+
       <section class="status-grid">
         <div>
           <span class="label">导出</span>
@@ -53,6 +63,16 @@
         </div>
       </section>
 
+      <section class="time-filter">
+        <span class="label">发布时间</span>
+        <div class="time-filter-row">
+          <input type="date" id="dateFilterFrom" aria-label="起始日期">
+          <span class="time-filter-sep">至</span>
+          <input type="date" id="dateFilterTo" aria-label="结束日期">
+          <button id="clearDateFilterButton" type="button">清除</button>
+        </div>
+      </section>
+
       <section class="selection-bar">
         <div>
           <strong id="selectedCount">已选择 0 条</strong>
@@ -76,15 +96,6 @@
         <div class="job-header">
           <strong id="jobStatus">当前没有导出任务</strong>
           <span id="jobCounts"></span>
-        </div>
-        <div class="progress-block export-progress">
-          <div class="progress-header">
-            <span id="exportProgressLabel">导出进度</span>
-            <strong id="exportProgressText">空闲</strong>
-          </div>
-          <div class="progress-track" role="progressbar" aria-label="导出进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
-            <div id="exportProgressFill" class="progress-fill"></div>
-          </div>
         </div>
         <pre id="jobLog"></pre>
       </section>
