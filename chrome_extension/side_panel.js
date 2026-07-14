@@ -1,5 +1,106 @@
 'use strict';
 
+function escapePinHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function pinImageUrl(entry) {
+  const explicitUrl = entry?.originalUrl
+    || entry?.original_url
+    || entry?.image?.originalUrl
+    || entry?.image?.original_url
+    || entry?.image?.url
+    || entry?.imageInfo?.originalUrl
+    || entry?.imageInfo?.original_url
+    || entry?.content?.originalUrl
+    || entry?.content?.original_url;
+  if (explicitUrl) return explicitUrl;
+  const genericUrl = entry?.url || entry?.src || '';
+  const type = String(entry?.type || '').toLowerCase();
+  return type.includes('image') || /(?:\.jpe?g|\.png|\.gif|\.webp|\.avif)(?:[?#]|$)|zhimg\.com/i.test(String(genericUrl))
+    ? genericUrl
+    : '';
+}
+
+function pinLinkCardHtml(entry) {
+  if (!entry || typeof entry !== 'object') return '';
+  const url = entry.url
+    || entry.href
+    || entry.link
+    || entry.target?.url
+    || entry.content?.url
+    || entry.question?.url
+    || '';
+  if (!url || !/^https?:\/\//i.test(String(url))) return '';
+  const title = entry.title
+    || entry.text
+    || entry.content?.title
+    || entry.target?.title
+    || entry.question?.title
+    || entry.target?.question?.title
+    || url;
+  return `<p><a href="${escapePinHtml(url)}">${escapePinHtml(title)}</a></p>`;
+}
+
+function pinContentToHtml(item) {
+  const parts = [];
+  const imageUrls = new Set();
+  const linkUrls = new Set();
+  let knownText = '';
+
+  const addHtml = (html) => {
+    const value = typeof html === 'string' ? html.trim() : '';
+    if (!value) return;
+    parts.push(value);
+    knownText += ` ${value.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()}`;
+  };
+  const addText = (text) => {
+    const value = typeof text === 'string' ? text.trim() : '';
+    if (!value || knownText.includes(value)) return;
+    addHtml(`<p>${escapePinHtml(value).replace(/\r?\n/g, '<br>')}</p>`);
+  };
+  const addImage = (entry) => {
+    const url = String(pinImageUrl(entry) || '').trim();
+    if (!url || imageUrls.has(url) || parts.some((part) => part.includes(url))) return;
+    imageUrls.add(url);
+    addHtml(`<img src="${escapePinHtml(url)}" alt="" />`);
+  };
+  const addLinkCard = (entry) => {
+    const html = pinLinkCardHtml(entry);
+    if (!html) return;
+    const url = String(entry?.url || entry?.href || entry?.link || entry?.target?.url || entry?.content?.url || entry?.question?.url || '');
+    if (linkUrls.has(url) || parts.some((part) => part.includes(url))) return;
+    linkUrls.add(url);
+    addHtml(html);
+  };
+
+  addHtml(item?.contentHtml);
+  if (typeof item?.content === 'string') addHtml(item.content);
+
+  if (Array.isArray(item?.content)) {
+    item.content.forEach((entry) => {
+      const type = String(entry?.type || '').toLowerCase();
+      const text = typeof entry?.content === 'string' ? entry.content : (entry?.text || entry?.content?.text || '');
+      if (['text', 'paragraph', 'title'].includes(type) || (!type && text)) addText(text);
+      if (type.includes('image') || pinImageUrl(entry)) addImage(entry);
+      if (type.includes('link') || type.includes('quote') || type.includes('reference')) addLinkCard(entry);
+    });
+  }
+
+  for (const images of [item?.images, item?.imageList, item?.image_list]) {
+    if (Array.isArray(images)) images.forEach(addImage);
+  }
+  for (const card of [item?.target, item?.quote, item?.quoted, item?.repost, item?.repin, item?.linkCard, item?.link_card, item?.attachedInfo, item?.attached_info]) {
+    addLinkCard(card);
+  }
+
+  return parts.join('\n');
+}
+
 // ============================
 // Content type configuration
 // ============================
@@ -165,22 +266,8 @@ const CONTENT_TYPES = {
     },
     // Pins: store full contentHtml + author during collection since there is no standalone pin page
     apiItemToExtraFields: (item) => {
-      let fullHtml = typeof item?.contentHtml === 'string' ? item.contentHtml : '';
-      if (!fullHtml && typeof item?.content === 'string') fullHtml = item.content;
-      if (Array.isArray(item?.content)) {
-        const textHtml = item.content
-          .filter(e => e?.type === 'text' && e?.content)
-          .map(e => `<p>${String(e.content).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</p>`)
-          .join('\n');
-        const imgsHtml = item.content
-          .filter(e => e?.type === 'image' && e?.originalUrl)
-          .map(e => `<img src="${e.originalUrl}" />`)
-          .join('\n');
-        const blocksHtml = [textHtml, imgsHtml].filter(Boolean).join('\n');
-        if (blocksHtml) fullHtml += (fullHtml ? '\n' : '') + blocksHtml;
-      }
       return {
-        contentHtml: fullHtml,
+        contentHtml: pinContentToHtml(item),
         author: item?.author?.name || '知乎用户',
         createdTime: item?.created || null,
         updatedTime: item?.updated || null,
@@ -195,25 +282,13 @@ const CONTENT_TYPES = {
     initialDataEntity: 'pins',
     initialDataIdFromUrl: (url) => { const m = url.match(/\/pin\/(\d+)/); return m ? m[1] : ''; },
     initialDataTitle: () => null,
-    initialDataContent: (data) => {
-      let html = typeof data?.contentHtml === 'string' ? data.contentHtml : '';
-      if (Array.isArray(data?.content)) {
-        const textHtml = data.content
-          .filter(e => e?.type === 'text' && e?.content)
-          .map(e => `<p>${String(e.content).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</p>`)
-          .join('\n');
-        const imgsHtml = data.content
-          .filter(e => e?.type === 'image' && e?.originalUrl)
-          .map(e => `<img src="${e.originalUrl}" />`)
-          .join('\n');
-        const blocksHtml = [textHtml, imgsHtml].filter(Boolean).join('\n');
-        if (blocksHtml) html += (html ? '\n' : '') + blocksHtml;
-      }
-      return html;
-    },
+    initialDataContent: (data) => pinContentToHtml(data),
     initialDataAuthor: (data, initialData) => {
+      if (data?.author?.name) return data.author.name;
+      if (data?.authorName) return data.authorName;
       const users = initialData?.initialState?.entities?.users || {};
-      for (const key in users) { if (users[key]?.name) return users[key].name; }
+      const authorId = data?.author?.id || data?.authorId || data?.author_id;
+      if (authorId && users[authorId]?.name) return users[authorId].name;
       return '知乎用户';
     },
     initialDataCreated: (data) => data?.created || null,
@@ -445,6 +520,19 @@ function getSlugFromUrl(url) {
   }
 }
 
+function isExpectedProfilePage(url, type = state.currentType) {
+  try {
+    const parsed = new URL(url);
+    if (!parsed.hostname.endsWith('zhihu.com')) return false;
+    const match = parsed.pathname.replace(/\/+$/, '').match(/^\/people\/([^/]+)\/([^/]+)$/);
+    if (!match) return false;
+    const expectedSections = { answers: ['answers'], articles: ['posts'], pins: ['pins', 'zhi'] }[type] || [];
+    return expectedSections.includes(match[2]);
+  } catch {
+    return false;
+  }
+}
+
 // ============================
 // Item normalization (type-aware)
 // ============================
@@ -576,6 +664,75 @@ async function switchType(type) {
 // Collection (injected into profile page)
 // ============================
 async function scrapeContentFromPage(type, runId) {
+  // Keep these helpers self-contained because this function is serialized and
+  // injected into the active Zhihu tab by chrome.scripting.executeScript.
+  const escapePinValue = (value) => String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+  const imageUrlFromPinEntry = (entry) => {
+    const explicitUrl = entry?.originalUrl
+      || entry?.original_url
+      || entry?.image?.originalUrl
+      || entry?.image?.original_url
+      || entry?.image?.url
+      || entry?.imageInfo?.originalUrl
+      || entry?.imageInfo?.original_url
+      || entry?.content?.originalUrl
+      || entry?.content?.original_url;
+    if (explicitUrl) return explicitUrl;
+    const genericUrl = entry?.url || entry?.src || '';
+    const entryType = String(entry?.type || '').toLowerCase();
+    return entryType.includes('image') || /(?:\.jpe?g|\.png|\.gif|\.webp|\.avif)(?:[?#]|$)|zhimg\.com/i.test(String(genericUrl))
+      ? genericUrl
+      : '';
+  };
+  const pinHtmlFromItem = (item) => {
+    const parts = [];
+    let knownText = '';
+    const addHtml = (html) => {
+      const value = typeof html === 'string' ? html.trim() : '';
+      if (!value) return;
+      parts.push(value);
+      knownText += ` ${value.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()}`;
+    };
+    const addText = (text) => {
+      const value = typeof text === 'string' ? text.trim() : '';
+      if (value && !knownText.includes(value)) addHtml(`<p>${escapePinValue(value).replace(/\r?\n/g, '<br>')}</p>`);
+    };
+    const addImage = (entry) => {
+      const url = String(imageUrlFromPinEntry(entry) || '').trim();
+      if (url && !parts.some((part) => part.includes(url))) addHtml(`<img src="${escapePinValue(url)}" alt="" />`);
+    };
+    const addCard = (entry) => {
+      if (!entry || typeof entry !== 'object') return;
+      const url = entry.url || entry.href || entry.link || entry.target?.url || entry.content?.url || entry.question?.url || '';
+      if (!/^https?:\/\//i.test(String(url)) || parts.some((part) => part.includes(url))) return;
+      const title = entry.title || entry.text || entry.content?.title || entry.target?.title || entry.question?.title || entry.target?.question?.title || url;
+      addHtml(`<p><a href="${escapePinValue(url)}">${escapePinValue(title)}</a></p>`);
+    };
+
+    addHtml(item?.contentHtml);
+    if (typeof item?.content === 'string') addHtml(item.content);
+    if (Array.isArray(item?.content)) {
+      item.content.forEach((entry) => {
+        const entryType = String(entry?.type || '').toLowerCase();
+        const text = typeof entry?.content === 'string' ? entry.content : (entry?.text || entry?.content?.text || '');
+        if (['text', 'paragraph', 'title'].includes(entryType) || (!entryType && text)) addText(text);
+        if (entryType.includes('image') || imageUrlFromPinEntry(entry)) addImage(entry);
+        if (entryType.includes('link') || entryType.includes('quote') || entryType.includes('reference')) addCard(entry);
+      });
+    }
+    for (const images of [item?.images, item?.imageList, item?.image_list]) {
+      if (Array.isArray(images)) images.forEach(addImage);
+    }
+    for (const card of [item?.target, item?.quote, item?.quoted, item?.repost, item?.repin, item?.linkCard, item?.link_card, item?.attachedInfo, item?.attached_info]) {
+      addCard(card);
+    }
+    return parts.join('\n');
+  };
+
   const injectedConfigs = {
     answers: {
       label: '回答',
@@ -678,22 +835,8 @@ async function scrapeContentFromPage(type, runId) {
         return (html || content || item?.excerpt || '').replace(/<[^>]*>/g, '').trim().slice(0, 260);
       },
       apiItemToExtraFields: (item) => {
-        let fullHtml = typeof item?.contentHtml === 'string' ? item.contentHtml : '';
-        if (!fullHtml && typeof item?.content === 'string') fullHtml = item.content;
-        if (Array.isArray(item?.content)) {
-          const textHtml = item.content
-            .filter((entry) => entry?.type === 'text' && entry?.content)
-            .map((entry) => `<p>${String(entry.content).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</p>`)
-            .join('\n');
-          const imgsHtml = item.content
-            .filter((entry) => entry?.type === 'image' && entry?.originalUrl)
-            .map((entry) => `<img src="${entry.originalUrl}" />`)
-            .join('\n');
-          const blocksHtml = [textHtml, imgsHtml].filter(Boolean).join('\n');
-          if (blocksHtml) fullHtml += (fullHtml ? '\n' : '') + blocksHtml;
-        }
         return {
-          contentHtml: fullHtml,
+          contentHtml: pinHtmlFromItem(item),
           author: item?.author?.name || '知乎用户',
           createdTime: item?.created || null,
           updatedTime: item?.updated || null,
@@ -716,10 +859,16 @@ async function scrapeContentFromPage(type, runId) {
   }
 
   const slug = decodeURIComponent(match[1]);
+  const expectedSections = { answers: ['answers'], articles: ['posts'], pins: ['pins', 'zhi'] }[type] || [];
+  const normalizedPath = window.location.pathname.replace(/\/+$/, '');
+  if (!expectedSections.some((section) => normalizedPath === `/people/${match[1]}/${section}`)) {
+    throw new Error(`请先打开该用户的 /${expectedSections[0]} 页面再采集，不能从动态页或其他标签页采集。`);
+  }
   const limit = 20;
   const delayMs = 600;
   const include = config.apiInclude ? config.apiInclude.join(',') : null;
   const itemsByUrl = new Map();
+  const apiUrls = new Set();
   let remoteTotal = null;
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -743,11 +892,25 @@ async function scrapeContentFromPage(type, runId) {
   const rememberItem = (item) => {
     if (!item.url) return;
     const previous = itemsByUrl.get(item.url) || {};
+    const contentScore = (html) => {
+      if (!html) return 0;
+      const template = document.createElement('template');
+      template.innerHTML = html;
+      const textLength = (template.content.textContent || '').replace(/\s+/g, ' ').trim().length;
+      return textLength
+        + template.content.querySelectorAll('img').length * 500
+        + template.content.querySelectorAll('a.LinkCard, a[data-draft-type="link-card"]').length * 500;
+    };
+    const previousHtml = previous.contentHtml || '';
+    const incomingHtml = item.contentHtml || '';
+    const bestHtml = contentScore(incomingHtml) > contentScore(previousHtml) ? incomingHtml : previousHtml;
     itemsByUrl.set(item.url, {
       url: item.url,
       title: clean(item.title || previous.title || '', 140),
-      snippet: clean(item.snippet || previous.snippet || '', 260),
-      contentHtml: item.contentHtml || previous.contentHtml || '',
+      // The visible card is the most faithful preview of pins. Keep it when the
+      // API response later provides a shorter or structurally different excerpt.
+      snippet: clean(previous.snippet || item.snippet || '', 260),
+      contentHtml: bestHtml,
       author: item.author || previous.author || '',
       // DOM-visible publish time is collected before API pagination and is the
       // user-facing source of truth. Do not overwrite it with API timestamps.
@@ -770,6 +933,53 @@ async function scrapeContentFromPage(type, runId) {
   const titleFromContainer = (container, anchor, fallback = '') => {
     if (!config.domTitleSelector) return fallback;
     return container?.querySelector(config.domTitleSelector)?.textContent || anchor?.textContent || fallback;
+  };
+
+  const slugFromProfileUrl = (value) => {
+    try {
+      const parsed = new URL(value, window.location.origin);
+      return decodeURIComponent(parsed.pathname.match(/^\/people\/([^/]+)/)?.[1] || '');
+    } catch {
+      return '';
+    }
+  };
+
+  const containerBelongsToProfile = (container) => {
+    if (!container) return false;
+    const authorUrls = [
+      ...[...container.querySelectorAll('[itemprop="author"] a[href*="/people/"], .AuthorInfo a[href*="/people/"]')]
+        .map((element) => element.getAttribute('href') || ''),
+      ...[...container.querySelectorAll('[itemprop="author"] meta[itemprop="url"], .AuthorInfo meta[itemprop="url"]')]
+        .map((element) => element.getAttribute('content') || ''),
+    ];
+    const authorSlugs = authorUrls.map(slugFromProfileUrl).filter(Boolean);
+    return authorSlugs.length > 0 && authorSlugs.every((authorSlug) => authorSlug === slug);
+  };
+
+  const authorFromContainer = (container) => {
+    const meta = container?.querySelector('[itemprop="author"] meta[itemprop="name"], .AuthorInfo meta[itemprop="name"]');
+    const link = container?.querySelector('.AuthorInfo-name .UserLink-link, .AuthorInfo-name a');
+    return clean(meta?.getAttribute('content') || link?.textContent || '', 120);
+  };
+
+  const pinContentHtmlFromContainer = (container) => {
+    if (type !== 'pins' || !container) return '';
+    const root = container.querySelector('.RichContent') || container.querySelector('.RichText');
+    if (!root) return '';
+    const clone = root.cloneNode(true);
+    clone.querySelectorAll([
+      '.ContentItem-time',
+      '.ContentItem-actions',
+      '.PinToolbar-actions',
+      '#VirtualCatalogAnchorPoint',
+      'button',
+      'svg',
+    ].join(',')).forEach((element) => element.remove());
+    clone.querySelectorAll('img').forEach((image) => {
+      const source = image.getAttribute('data-original') || image.getAttribute('data-actualsrc') || image.getAttribute('src');
+      if (source) image.setAttribute('src', source);
+    });
+    return root === container.querySelector('.RichText') ? clone.outerHTML : clone.innerHTML;
   };
 
   const displayedPublishTimeFromContainer = (container, url) => {
@@ -796,12 +1006,15 @@ async function scrapeContentFromPage(type, runId) {
     const url = config.domLinkNormalizer(anchor.getAttribute('href') || '');
     if (!url) return;
     const container = anchor.closest(config.domItemSelector) || anchor.parentElement;
+    if (!containerBelongsToProfile(container)) return;
     const snippetEl = container?.querySelector(config.domSnippetSelector);
     const id = url.match(/\/(?:p|pin|answer)\/(\d+)/)?.[1] || '';
     rememberItem({
       url,
       title: titleFromContainer(container, anchor, config.domTitleSelector ? '' : `${config.label}${id}`),
       snippet: snippetEl?.textContent || '',
+      contentHtml: pinContentHtmlFromContainer(container),
+      author: authorFromContainer(container),
       createdTime: displayedPublishTimeFromContainer(container, url),
     });
   });
@@ -809,6 +1022,7 @@ async function scrapeContentFromPage(type, runId) {
   // Some cards expose the canonical id in data-zop while the visible link is
   // only a timestamp or is hidden behind expanded content.
   document.querySelectorAll(config.domItemSelector).forEach((container) => {
+    if (!containerBelongsToProfile(container)) return;
     const data = readDataJson(container, 'data-zop');
     const url = config.domItemToUrl(data);
     if (!url) return;
@@ -818,6 +1032,8 @@ async function scrapeContentFromPage(type, runId) {
       url,
       title: titleFromContainer(container, null, data?.title || `${config.label}${id}`),
       snippet: snippetEl?.textContent || '',
+      contentHtml: pinContentHtmlFromContainer(container),
+      author: authorFromContainer(container),
       createdTime: displayedPublishTimeFromContainer(container, url),
     });
   });
@@ -854,6 +1070,7 @@ async function scrapeContentFromPage(type, runId) {
         (data.data || []).forEach((item) => {
           const url = config.apiItemToUrl(item);
           if (!url) return;
+          apiUrls.add(url);
           const extra = config.apiItemToExtraFields ? config.apiItemToExtraFields(item) : {};
           rememberItem({
             url,
@@ -889,7 +1106,10 @@ async function scrapeContentFromPage(type, runId) {
     throw new Error(`知乎接口不可用：${apiErrors.join('；')}`);
   }
 
-  const items = [...itemsByUrl.values()];
+  // A successful member API response is authoritative for ownership. DOM
+  // sniffing is retained only to enrich those URLs with visible timestamps and
+  // complete pin cards; nested links and activity-feed content are discarded.
+  const items = [...itemsByUrl.values()].filter((item) => !apiSucceeded || apiUrls.has(item.url));
   report({
     phase: 'done',
     fetched: items.length,
@@ -897,7 +1117,7 @@ async function scrapeContentFromPage(type, runId) {
     isEnd: true,
     message: remoteTotal ? `已采集 ${items.length} / ${remoteTotal} 条` : `已采集 ${items.length} 条`,
   });
-  return { slug, items, urls: items.map((item) => item.url), remoteTotal };
+  return { slug, items, urls: items.map((item) => item.url), remoteTotal, authoritative: apiSucceeded };
 }
 
 // ============================
@@ -1030,6 +1250,13 @@ async function collectUrls() {
     await loadCacheForActiveTab();
   }
   if (!state.tab?.id || !state.slug) return;
+  if (!isExpectedProfilePage(state.tab.url || '', state.currentType)) {
+    const expectedSection = { answers: 'answers', articles: 'posts', pins: 'pins' }[state.currentType];
+    const message = `请先打开 /people/${state.slug}/${expectedSection} 页面再采集。`;
+    els.lastCollectedText.textContent = message;
+    setProgress(els.collectProgressFill, els.collectProgressText, 0, '当前页面不支持采集');
+    return;
+  }
 
   els.collectButton.disabled = true;
   els.collectButton.textContent = '采集中...';
@@ -1046,9 +1273,15 @@ async function collectUrls() {
 
     const collected = result.result || {};
     const previousUrlCount = state.urls.length;
+    const previousUrls = new Set(state.urls);
     const collectedItems = normalizeItems(collected.items || collected.urls || []);
-    const merged = mergeItems(state.items, collectedItems);
-    const added = merged.length - previousUrlCount;
+    const collectedUrls = new Set(itemUrls(collectedItems));
+    const existingItems = collected.authoritative
+      ? state.items.filter((item) => collectedUrls.has(item.url))
+      : state.items;
+    const merged = mergeItems(existingItems, collectedItems);
+    const added = merged.filter((item) => !previousUrls.has(item.url)).length;
+    const removed = collected.authoritative ? Math.max(0, previousUrlCount + added - merged.length) : 0;
 
     state.slug = collected.slug || state.slug;
     state.items = merged;
@@ -1067,7 +1300,7 @@ async function collectUrls() {
     });
 
     renderUrls();
-    els.lastCollectedText.textContent = `新增 ${added} 条，${formatTime(state.lastCollectedAt)}`;
+    els.lastCollectedText.textContent = `新增 ${added} 条${removed ? `，清理 ${removed} 条旧缓存` : ''}，${formatTime(state.lastCollectedAt)}`;
     setProgress(els.collectProgressFill, els.collectProgressText, 100, `已缓存 ${state.urls.length} 条`);
   } catch (error) {
     els.lastCollectedText.textContent = error.message;
@@ -1181,9 +1414,31 @@ function extractContent(url, pageHtml) {
   // Source 2: DOM extraction
   const sel = config.domSelectors;
   let fromDOM = null;
-  const contentEl = sel.content ? doc.querySelector(sel.content) : null;
-  const titleEl = sel.title ? (doc.querySelector(sel.title) || doc.querySelector('title')) : null;
-  const authorEl = sel.author ? doc.querySelector(sel.author) : null;
+  const targetByDataZop = [...doc.querySelectorAll('[data-zop]')].find((element) => {
+    try {
+      const data = JSON.parse(element.getAttribute('data-zop') || '{}');
+      return String(data.itemId || data.id || '') === String(ids.id);
+    } catch {
+      return false;
+    }
+  });
+  const targetLink = [...doc.querySelectorAll('a[href]')].find((link) => {
+    try {
+      const parsed = new URL(link.getAttribute('href') || '', url);
+      return new RegExp(`/(?:answer|p|pin)/${ids.id}/?$`).test(parsed.pathname);
+    } catch {
+      return false;
+    }
+  });
+  const targetContainer = targetByDataZop
+    || targetLink?.closest('.AnswerItem, .ArticleItem, .PinItem, .ContentItem, .List-item')
+    || null;
+  const contentScope = targetContainer || doc;
+  const contentEl = sel.content ? contentScope.querySelector(sel.content) : null;
+  const titleEl = sel.title
+    ? (contentScope.querySelector(sel.title) || doc.querySelector(sel.title) || doc.querySelector('title'))
+    : null;
+  const authorEl = sel.author ? contentScope.querySelector(sel.author) : null;
   const elementText = (el) => el?.getAttribute?.('content') || el?.textContent || '';
   const metaContent = (itemprop) => doc.querySelector(`meta[itemprop="${itemprop}"]`)?.getAttribute('content') || '';
   const parseDateSeconds = (value) => {
@@ -1307,6 +1562,12 @@ function nodeToMarkdown(node, depth = 0) {
   }
   if (tag === 'a') {
     const href = node.getAttribute('href') || '';
+    if (node.classList.contains('LinkCard') || node.getAttribute('data-draft-type') === 'link-card') {
+      const title = node.getAttribute('data-draft-title')
+        || node.querySelector('.LinkCard-title')?.textContent?.trim()
+        || href;
+      return href ? block(`[${markdownEscape(title)}](${href})`) : title;
+    }
     const text = children() || href;
     return href ? `[${text}](${href})` : text;
   }
@@ -1405,6 +1666,9 @@ function buildMarkdown(data) {
 function sanitizeFilenamePart(value) {
   const defaultName = currentConfig().defaultName;
   return cleanText(value || '', 80)
+    // Windows forbids ASCII "?" in filenames. Preserve the punctuation by
+    // replacing it with the visually equivalent full-width character.
+    .replace(/\?/g, '？')
     .replace(/[\\/:*?"<>|#^[\]()]/g, '')
     .replace(/\s+/g, ' ')
     .trim() || `zhihu-${defaultName}`;
@@ -1542,8 +1806,9 @@ async function exportSelectedZip() {
         throw new Error('导出已取消。');
       }
 
-      // For pins: use cached contentHtml directly (no standalone pin pages)
-      if (state.currentType === 'pins' && item.contentHtml) {
+      // Pins do not have a reliable standalone detail page. Prefer the complete
+      // card cached during collection and fall back to the visible preview text.
+      if (state.currentType === 'pins' && (item.contentHtml || item.snippet)) {
         appendLog(`使用缓存内容：${item.url}`);
         try {
           const pinId = item.url.match(/\/pin\/(\d+)/)?.[1] || item.title.replace(/^想法/, '') || '';
@@ -1552,7 +1817,7 @@ async function exportSelectedZip() {
             url: item.url,
             title: item.title || `想法${pinId}`,
             author: item.author || '知乎用户',
-            html: item.contentHtml,
+            html: item.contentHtml || `<p>${escapeHtml(item.snippet)}</p>`,
             createdTime: item.createdTime || null,
             updatedTime: item.updatedTime || null,
             voteCount: item.voteCount ?? null,
