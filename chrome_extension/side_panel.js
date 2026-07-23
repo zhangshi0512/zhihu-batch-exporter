@@ -340,6 +340,7 @@ const els = {
   dateFilterFrom: document.getElementById('dateFilterFrom'),
   dateFilterTo: document.getElementById('dateFilterTo'),
   clearDateFilterButton: document.getElementById('clearDateFilterButton'),
+  downloadImagesCheckbox: document.getElementById('downloadImagesCheckbox'),
 };
 
 // ============================
@@ -1721,6 +1722,49 @@ function u32(value) {
   return bytes;
 }
 
+function extractImageUrlsFromHtml(html) {
+  if (!html) return [];
+  const urls = new Set();
+  const temp = document.createElement('div');
+  temp.innerHTML = html;
+  temp.querySelectorAll('img').forEach((img) => {
+    const src = img.getAttribute('data-actualsrc') || img.getAttribute('data-original') || img.getAttribute('src') || '';
+    if (src && /^https?:\/\//i.test(src) && !src.includes('equation') && !src.includes('eeimg')) {
+      urls.add(src);
+    }
+  });
+  return Array.from(urls);
+}
+
+function inferImageExtension(url, contentType) {
+  if (contentType) {
+    const mime = contentType.split(';')[0].trim().toLowerCase();
+    const map = {
+      'image/jpeg': '.jpg',
+      'image/png': '.png',
+      'image/gif': '.gif',
+      'image/webp': '.webp',
+      'image/svg+xml': '.svg',
+    };
+    if (map[mime]) return map[mime];
+  }
+  const match = url.match(/\.(jpg|jpeg|png|gif|webp|svg)(\?|$)/i);
+  return match ? `.${match[1].toLowerCase()}` : '.jpg';
+}
+
+async function fetchImageAsUint8Array(url, signal) {
+  try {
+    const res = await fetch(url, { signal, credentials: 'omit' });
+    if (!res.ok) return null;
+    const arrayBuffer = await res.arrayBuffer();
+    const contentType = res.headers.get('content-type');
+    const ext = inferImageExtension(url, contentType);
+    return { bytes: new Uint8Array(arrayBuffer), ext };
+  } catch {
+    return null;
+  }
+}
+
 function createZipBlob(files) {
   const encoder = new TextEncoder();
   const parts = [];
@@ -1730,7 +1774,9 @@ function createZipBlob(files) {
 
   files.forEach((file) => {
     const nameBytes = encoder.encode(file.name);
-    const dataBytes = encoder.encode(file.data);
+    const dataBytes = file.data instanceof Uint8Array
+      ? file.data
+      : (file.data instanceof ArrayBuffer ? new Uint8Array(file.data) : encoder.encode(file.data));
     const crc = crc32(dataBytes);
     const localHeader = [
       u32(0x04034b50), u16(20), u16(0x0800), u16(0), u16(time), u16(date),
@@ -1773,6 +1819,30 @@ function selectedItems() {
   return state.items.filter((item) => state.selected.has(item.url) && visibleUrls.has(item.url));
 }
 
+async function processItemMarkdownAndImages(content, config, files, downloadImages, signal, appendLog) {
+  let markdown = buildMarkdown(content);
+  if (downloadImages && content.html) {
+    const imageUrls = extractImageUrlsFromHtml(content.html);
+    if (imageUrls.length > 0) {
+      appendLog(`  └─ 本地化 ${imageUrls.length} 张图片...`);
+      for (let i = 0; i < imageUrls.length; i++) {
+        if (signal?.aborted) break;
+        const imgUrl = imageUrls[i];
+        const res = await fetchImageAsUint8Array(imgUrl, signal);
+        if (res) {
+          const imgName = `img_${content.id}_${String(i + 1).padStart(3, '0')}${res.ext}`;
+          files.push({
+            name: `${config.folderName}/images/${imgName}`,
+            data: res.bytes,
+          });
+          markdown = markdown.split(imgUrl).join(`./images/${imgName}`);
+        }
+      }
+    }
+  }
+  files.push({ name: `${config.folderName}/${buildFilename(content)}`, data: markdown });
+}
+
 // ============================
 // Export ZIP
 // ============================
@@ -1798,6 +1868,7 @@ async function exportSelectedZip() {
   const config = currentConfig();
   const files = [];
   const failures = [];
+  const downloadImages = els.downloadImagesCheckbox ? els.downloadImagesCheckbox.checked : true;
 
   try {
     for (let index = 0; index < items.length; index++) {
@@ -1826,8 +1897,7 @@ async function exportSelectedZip() {
             commentCount: item.commentCount ?? null,
             thanksCount: item.thanksCount ?? null,
           };
-          const markdown = buildMarkdown(content);
-          files.push({ name: `${config.folderName}/${buildFilename(content)}`, data: markdown });
+          await processItemMarkdownAndImages(content, config, files, downloadImages, state.exportAbortController.signal, appendLog);
           appendLog(`已加入：${content.title}`);
         } catch (error) {
           failures.push({ url: item.url, error: error.message });

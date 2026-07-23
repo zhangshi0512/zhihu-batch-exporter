@@ -41,5 +41,20 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === 'downloadFile') {
+    chrome.downloads.download(
+      { url: message.url, filename: message.filename, saveAs: true },
+      (downloadId) => {
+        const error = chrome.runtime.lastError;
+        if (error) {
+          sendResponse({ ok: false, error: error.message });
+        } else {
+          sendResponse({ ok: true, downloadId });
+        }
+      }
+    );
+    return true;
+  }
+
   return false;
 });

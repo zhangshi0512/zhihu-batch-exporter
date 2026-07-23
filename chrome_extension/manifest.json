@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "知乎内容批量导出",
-  "version": "0.2.0",
-  "description": "从知乎个人主页采集回答、文章和想法链接，并将选中的内容导出为 Markdown ZIP 文件。",
+  "version": "0.3.0",
+  "description": "从知乎采集回答、文章和想法，导出为支持图片本地化的 Markdown ZIP 文件，并支持页面单篇快捷导出。",
   "action": {
     "default_title": "知乎内容批量导出"
   },
@@ -12,6 +12,32 @@
   "side_panel": {
     "default_path": "side_panel.html"
   },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.zhihu.com/*",
+        "https://zhuanlan.zhihu.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "content.css"
+      ],
+      "matches": [
+        "https://www.zhihu.com/*",
+        "https://zhuanlan.zhihu.com/*"
+      ]
+    }
+  ],
   "permissions": [
     "cookies",
     "downloads",
@@ -22,6 +48,7 @@
   ],
   "host_permissions": [
     "https://www.zhihu.com/*",
-    "https://*.zhihu.com/*"
+    "https://*.zhihu.com/*",
+    "https://*.zhimg.com/*"
   ]
 }
