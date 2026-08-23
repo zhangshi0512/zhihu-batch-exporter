@@ -91,7 +91,7 @@ p {
 
 .status-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -126,8 +126,79 @@ p {
   white-space: nowrap;
 }
 
+.open-platform,
+.favlist-picker {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 10px;
+}
+
+.open-platform {
+  display: grid;
+  gap: 8px;
+}
+
+.disclosure {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-weight: 600;
+  min-height: 28px;
+  padding: 0;
+  text-align: left;
+}
+
+.disclosure::after {
+  content: "▾";
+  float: right;
+  color: var(--muted);
+}
+
+.disclosure[aria-expanded="true"]::after {
+  content: "▴";
+}
+
+.open-platform-body {
+  display: grid;
+  gap: 8px;
+}
+
+.open-platform-body[hidden] {
+  display: none;
+}
+
+.open-platform-actions {
+  flex-wrap: wrap;
+}
+
+.favlist-picker {
+  display: grid;
+  gap: 6px;
+}
+
+.favlist-picker[hidden] {
+  display: none;
+}
+
+.favlist-picker select {
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0 8px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.url-item.is-unsupported {
+  opacity: 0.72;
+}
+
 .type-selector {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   border: 1px solid var(--line);
   border-radius: 8px;

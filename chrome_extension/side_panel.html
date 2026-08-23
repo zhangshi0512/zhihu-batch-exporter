@@ -36,8 +36,37 @@
           <strong id="cookieStatus">未知</strong>
         </div>
         <div>
+          <span class="label">开放平台</span>
+          <strong id="openPlatformStatus">未配置</strong>
+        </div>
+        <div>
           <span class="label">缓存</span>
           <strong id="cacheStatus">0 条</strong>
+        </div>
+      </section>
+
+      <section class="open-platform" id="openPlatformSection">
+        <button type="button" class="disclosure" id="openPlatformToggle" aria-expanded="false">
+          开放平台设置
+        </button>
+        <div class="open-platform-body" id="openPlatformBody" hidden>
+          <p class="help-text">Access Secret 只保存在本机，用来列出你自己的创作和收藏夹。导出正文仍然使用当前知乎登录 Cookie。请勿把 Secret 发给别人或截图。</p>
+          <label for="accessSecretInput">Access Secret</label>
+          <div class="path-control">
+            <input id="accessSecretInput" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴个人中心的 Access Secret">
+            <button type="button" id="saveSecretButton">保存</button>
+          </div>
+          <div class="button-row open-platform-actions">
+            <button type="button" id="probeSecretButton">探测连接</button>
+            <button type="button" id="clearSecretButton">清除 Secret</button>
+          </div>
+          <p class="help-text" id="openPlatformHint">未配置。配置后可导出收藏夹，并在自己的主页走官方目录。</p>
+          <label for="mySlugInput">我的知乎 slug</label>
+          <div class="path-control">
+            <input id="mySlugInput" type="text" autocomplete="off" spellcheck="false" placeholder="people 后面的用户名，例如 zhang-san">
+            <button type="button" id="saveMySlugButton">保存</button>
+          </div>
+          <p class="help-text">与当前主页一致时，采集回答 / 文章 / 想法会优先走官方目录；失败则回退到原来的页面采集。</p>
         </div>
       </section>
 
@@ -45,6 +74,17 @@
         <button class="type-btn active" data-type="answers">回答</button>
         <button class="type-btn" data-type="articles">文章</button>
         <button class="type-btn" data-type="pins">想法</button>
+        <button class="type-btn" data-type="collections">收藏夹</button>
+      </section>
+
+      <section class="favlist-picker" id="favlistPicker" hidden>
+        <span class="label">收藏夹</span>
+        <div class="path-control">
+          <select id="favlistSelect" aria-label="选择收藏夹">
+            <option value="">先采集收藏夹列表</option>
+          </select>
+          <button type="button" id="refreshFavlistsButton">刷新列表</button>
+        </div>
       </section>
 
       <section class="controls">

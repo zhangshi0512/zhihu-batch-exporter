@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "知乎内容批量导出",
-  "version": "0.3.0",
-  "description": "从知乎采集回答、文章和想法，导出为支持图片本地化的 Markdown ZIP 文件，并支持页面单篇快捷导出。",
+  "version": "0.4.0",
+  "description": "从知乎采集回答、文章、想法和收藏夹，导出为支持图片本地化的 Markdown ZIP 文件，并支持页面单篇快捷导出。",
   "action": {
     "default_title": "知乎内容批量导出"
   },
@@ -49,6 +49,7 @@
   "host_permissions": [
     "https://www.zhihu.com/*",
     "https://*.zhihu.com/*",
+    "https://developer.zhihu.com/*",
     "https://*.zhimg.com/*"
   ]
 }

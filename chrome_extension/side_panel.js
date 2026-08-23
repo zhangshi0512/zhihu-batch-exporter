@@ -144,7 +144,7 @@ const CONTENT_TYPES = {
       thanksCount: item?.thanks_count ?? null,
     }),
     // URL filter for cached items
-    urlFilter: (url) => url.startsWith('https://www.zhihu.com/question/'),
+    urlFilter: (url) => /^https:\/\/www\.zhihu\.com\/(?:question\/\d+\/answer\/|answer\/)\d+/.test(url),
     // Content extraction
     initialDataEntity: 'answers',
     initialDataIdFromUrl: (url) => { const m = url.match(/\/answer\/(\d+)/); return m ? m[1] : ''; },
@@ -307,6 +307,16 @@ const CONTENT_TYPES = {
     profilePath: (slug) => `/people/${slug}/pins`,
     defaultName: '想法',
   },
+  collections: {
+    label: '收藏夹',
+    labelEn: 'collections',
+    folderName: 'collections',
+    frontmatterType: 'zhihu-collection-item',
+    hasTitle: true,
+    supportsTruncated: false,
+    urlFilter: (url) => Boolean(url),
+    defaultName: '收藏',
+  },
 };
 
 // ============================
@@ -317,7 +327,20 @@ const els = {
   refreshButton: document.getElementById('refreshButton'),
   serviceStatus: document.getElementById('serviceStatus'),
   cookieStatus: document.getElementById('cookieStatus'),
+  openPlatformStatus: document.getElementById('openPlatformStatus'),
   cacheStatus: document.getElementById('cacheStatus'),
+  openPlatformToggle: document.getElementById('openPlatformToggle'),
+  openPlatformBody: document.getElementById('openPlatformBody'),
+  accessSecretInput: document.getElementById('accessSecretInput'),
+  saveSecretButton: document.getElementById('saveSecretButton'),
+  probeSecretButton: document.getElementById('probeSecretButton'),
+  clearSecretButton: document.getElementById('clearSecretButton'),
+  openPlatformHint: document.getElementById('openPlatformHint'),
+  mySlugInput: document.getElementById('mySlugInput'),
+  saveMySlugButton: document.getElementById('saveMySlugButton'),
+  favlistPicker: document.getElementById('favlistPicker'),
+  favlistSelect: document.getElementById('favlistSelect'),
+  refreshFavlistsButton: document.getElementById('refreshFavlistsButton'),
   collectButton: document.getElementById('collectButton'),
   hydrateButton: document.getElementById('hydrateButton'),
   collectProgressText: document.getElementById('collectProgressText'),
@@ -359,13 +382,41 @@ const state = {
   exportAbortController: null,
   dateFilterFrom: '',
   dateFilterTo: '',
+  openPlatform: { configured: false, masked: '', mySlug: '' },
+  favlists: [],
+  selectedFavlistToken: '',
 };
+
+function favlistLog(event, details) {
+  if (details === undefined) {
+    console.log(`[ZhihuExporter][favlist] ${event}`);
+    return;
+  }
+  console.log(`[ZhihuExporter][favlist] ${event}`, details);
+}
+
+function favlistCountBy(items, keyFn) {
+  const counts = {};
+  (items || []).forEach((item) => {
+    const key = String(keyFn(item) || '(empty)');
+    counts[key] = (counts[key] || 0) + 1;
+  });
+  return counts;
+}
 
 // ============================
 // Config helper
 // ============================
+function configFor(type = state.currentType) {
+  return CONTENT_TYPES[type] || CONTENT_TYPES.answers;
+}
+
 function currentConfig() {
-  return CONTENT_TYPES[state.currentType] || CONTENT_TYPES.answers;
+  return configFor(state.currentType);
+}
+
+function isCollectionsMode() {
+  return state.currentType === 'collections';
 }
 
 function typeLabel() {
@@ -386,7 +437,14 @@ function storageRemove(keys) {
 }
 
 function cacheKey(slug) {
+  if (isCollectionsMode()) {
+    return `zhihuFavlist:${state.selectedFavlistToken || 'none'}`;
+  }
   return `zhihuProfile:${slug}:${state.currentType}`;
+}
+
+function favlistsCacheKey() {
+  return 'zhihuFavlists';
 }
 
 // ============================
@@ -542,10 +600,18 @@ function normalizeItems(rawItems) {
   return (rawItems || [])
     .map((item) => {
       if (typeof item === 'string') {
-        return { url: item, title: '', snippet: '', contentHtml: '', author: '', createdTime: null, updatedTime: null, voteCount: null, likeCount: null, favoriteCount: null, commentCount: null, thanksCount: null };
+        return {
+          url: item, title: '', snippet: '', contentHtml: '', author: '',
+          createdTime: null, updatedTime: null, voteCount: null, likeCount: null,
+          favoriteCount: null, commentCount: null, thanksCount: null,
+          exportType: inferExportType(item), officialContentType: '',
+          favTime: null, favlistTitle: '', favlistUrlToken: '', unsupportedReason: '',
+        };
       }
+      const url = String(item?.url || '').trim();
+      const exportType = item?.exportType || inferExportType(url, item?.officialContentType);
       return {
-        url: String(item?.url || '').trim(),
+        url,
         title: cleanText(item?.title || '', 140),
         snippet: cleanText(item?.snippet || item?.excerpt || '', 260),
         contentHtml: item?.contentHtml || '',
@@ -557,18 +623,30 @@ function normalizeItems(rawItems) {
         favoriteCount: item?.favoriteCount ?? null,
         commentCount: item?.commentCount ?? null,
         thanksCount: item?.thanksCount ?? null,
+        exportType,
+        officialContentType: item?.officialContentType || '',
+        favTime: item?.favTime || null,
+        favlistTitle: item?.favlistTitle || '',
+        favlistUrlToken: item?.favlistUrlToken || '',
+        unsupportedReason: item?.unsupportedReason || unsupportedReasonFor(url, item?.officialContentType, exportType),
       };
     })
     .filter((item) => config.urlFilter(item.url));
 }
 
+function itemMergeKey(item) {
+  if (item?.url) return item.url;
+  return `${item?.officialContentType || item?.exportType || 'item'}:${item?.title || ''}`;
+}
+
 function mergeItems(existingItems, incomingItems) {
   const map = new Map();
-  normalizeItems(existingItems).forEach((item) => map.set(item.url, item));
+  normalizeItems(existingItems).forEach((item) => map.set(itemMergeKey(item), item));
   normalizeItems(incomingItems).forEach((item) => {
-    const previous = map.get(item.url) || {};
-    map.set(item.url, {
-      url: item.url,
+    const key = itemMergeKey(item);
+    const previous = map.get(key) || {};
+    map.set(key, {
+      url: item.url || previous.url || '',
       title: item.title || previous.title || '',
       snippet: item.snippet || previous.snippet || '',
       contentHtml: item.contentHtml || previous.contentHtml || '',
@@ -580,6 +658,12 @@ function mergeItems(existingItems, incomingItems) {
       favoriteCount: item.favoriteCount ?? previous.favoriteCount ?? null,
       commentCount: item.commentCount ?? previous.commentCount ?? null,
       thanksCount: item.thanksCount ?? previous.thanksCount ?? null,
+      exportType: item.exportType || previous.exportType || '',
+      officialContentType: item.officialContentType || previous.officialContentType || '',
+      favTime: item.favTime || previous.favTime || null,
+      favlistTitle: item.favlistTitle || previous.favlistTitle || '',
+      favlistUrlToken: item.favlistUrlToken || previous.favlistUrlToken || '',
+      unsupportedReason: item.unsupportedReason || previous.unsupportedReason || '',
     });
   });
   return [...map.values()];
@@ -615,11 +699,384 @@ async function checkCookie() {
 }
 
 // ============================
+// Open platform
+// ============================
+const OFFICIAL_CONTENT_TYPE = {
+  answers: 'answer',
+  articles: 'article',
+  pins: 'pin',
+};
+
+function stripTrackingParams(url) {
+  try {
+    const parsed = new URL(url);
+    ['utm_medium', 'utm_source', 'utm_campaign', 'utm_term', 'utm_content'].forEach((key) => {
+      parsed.searchParams.delete(key);
+    });
+    parsed.hash = '';
+    return parsed.toString().replace(/[?&]$/, '');
+  } catch {
+    return String(url || '');
+  }
+}
+
+function inferExportType(url, officialContentType = '') {
+  const type = String(officialContentType || '').toLowerCase();
+  if (type === 'answer' || /zhihu\.com\/(?:question\/\d+\/answer\/|answer\/)\d+/.test(url)) return 'answers';
+  if (type === 'article' || /zhuanlan\.zhihu\.com\/p\/\d+/.test(url)) return 'articles';
+  if (type === 'pin' || /zhihu\.com\/pin\/\d+/.test(url)) return 'pins';
+  return '';
+}
+
+function unsupportedReasonFor(url, officialContentType, exportType) {
+  const type = String(officialContentType || '').toLowerCase();
+  if (type === 'zvideo') return '视频暂不支持全文导出';
+  if (type === 'question') return '问题页暂不支持全文导出';
+  if (exportType) return '';
+  return url ? '暂不支持该类型的全文导出' : '缺少内容链接';
+}
+
+function officialItemToLocal(item, extra = {}) {
+  let url = stripTrackingParams(item?.Url || item?.url || '');
+  if (url.startsWith('//')) url = `https:${url}`;
+  if (url.startsWith('http://')) url = url.replace(/^http:\/\//, 'https://');
+  const officialContentType = String(item?.ContentType || extra.officialContentType || '').toLowerCase();
+  const exportType = inferExportType(url, officialContentType);
+  return {
+    url,
+    title: item?.Title || extra.title || '',
+    snippet: item?.Summary || extra.snippet || '',
+    author: item?.Author?.Name || extra.author || '',
+    createdTime: item?.CreatedAt ?? extra.createdTime ?? null,
+    updatedTime: extra.updatedTime ?? null,
+    voteCount: item?.LikeCount ?? extra.voteCount ?? null,
+    likeCount: item?.LikeCount ?? extra.likeCount ?? null,
+    favoriteCount: item?.FavoriteCount ?? extra.favoriteCount ?? null,
+    commentCount: item?.CommentCount ?? extra.commentCount ?? null,
+    thanksCount: extra.thanksCount ?? null,
+    contentHtml: extra.contentHtml || '',
+    exportType,
+    officialContentType,
+    favTime: item?.FavTime ?? extra.favTime ?? null,
+    favlistTitle: extra.favlistTitle || '',
+    favlistUrlToken: extra.favlistUrlToken || '',
+    unsupportedReason: unsupportedReasonFor(url, officialContentType, exportType),
+  };
+}
+
+function excerptFromV4Content(content) {
+  const raw = content?.excerpt || content?.excerpt_new || content?.excerpt_title || '';
+  if (typeof raw === 'string' && raw.trim()) {
+    return raw.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+  if (typeof content?.content === 'string') {
+    return content.content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 180);
+  }
+  return '';
+}
+
+function v4CollectionItemToLocal(entry, extra = {}) {
+  const content = entry?.content || entry?.target || entry || {};
+  const type = String(content.type || entry?.type || '').toLowerCase();
+  let url = String(content.url || '').trim();
+  if (url.startsWith('//')) url = `https:${url}`;
+  if (url.startsWith('http://')) url = url.replace(/^http:\/\//, 'https://');
+  if (!url || /(?:^|\/\/)(?:api|www)\.zhihu\.com\/(?:api\/|answers\/|articles\/|pins\/)/.test(url)) {
+    if (type === 'answer' && content.id) {
+      const questionId = content.question?.id;
+      url = questionId
+        ? `https://www.zhihu.com/question/${questionId}/answer/${content.id}`
+        : `https://www.zhihu.com/answer/${content.id}`;
+    } else if ((type === 'article' || type === 'post') && content.id) {
+      url = `https://zhuanlan.zhihu.com/p/${content.id}`;
+    } else if (type === 'pin' && content.id) {
+      url = `https://www.zhihu.com/pin/${content.id}`;
+    } else if ((type === 'zvideo' || type === 'zvideo_answer') && content.id) {
+      url = `https://www.zhihu.com/zvideo/${content.id}`;
+    } else if (type === 'question' && content.id) {
+      url = `https://www.zhihu.com/question/${content.id}`;
+    }
+  }
+
+  const title = String(content.question?.title || content.title || extra.title || '').trim()
+    || (type === 'pin' && content.id ? `想法 ${content.id}` : '');
+  const exportType = inferExportType(url, type);
+  if (!url) {
+    url = `zhihu:unresolved/${extra.favlistUrlToken || 'fav'}/${type || 'item'}/${content.id || title || 'unknown'}`;
+  }
+  return {
+    url: stripTrackingParams(url),
+    title,
+    snippet: excerptFromV4Content(content),
+    contentHtml: '',
+    author: String(content.author?.name || '').trim(),
+    createdTime: content.created_time || content.created || null,
+    updatedTime: content.updated_time || content.updated || null,
+    voteCount: content.voteup_count ?? null,
+    likeCount: content.liked_count ?? content.reaction_count ?? null,
+    favoriteCount: content.favlists_count ?? content.favorite_count ?? null,
+    commentCount: content.comment_count ?? null,
+    thanksCount: content.thanks_count ?? null,
+    exportType,
+    officialContentType: type,
+    favTime: entry?.created || entry?.collected_time || entry?.collected_at || null,
+    favlistTitle: extra.favlistTitle || '',
+    favlistUrlToken: extra.favlistUrlToken || '',
+    unsupportedReason: unsupportedReasonFor(url, type, exportType),
+  };
+}
+
+function collectionIdsToTry(folder, token) {
+  const ids = [];
+  const add = (value) => {
+    const normalized = String(value || '').trim();
+    if (normalized && !ids.includes(normalized)) ids.push(normalized);
+  };
+  add(token);
+  add(folder?.urlToken);
+  const match = String(folder?.url || '').match(/\/collection\/([^/?#]+)/i);
+  if (match) {
+    try {
+      add(decodeURIComponent(match[1]));
+    } catch {
+      add(match[1]);
+    }
+  }
+  return ids;
+}
+
+function readPaging(data) {
+  const paging = data?.Paging || data?.paging || {};
+  const totals = Number(paging.Totals ?? paging.totals);
+  return {
+    isEnd: paging.IsEnd ?? paging.is_end ?? paging.isEnd,
+    nextOffset: paging.NextOffset ?? paging.next_offset ?? paging.nextOffset,
+    totals: Number.isFinite(totals) ? totals : null,
+    items: data?.Items || data?.items || [],
+  };
+}
+
+function nextPageOffset(paging, currentOffset, pageSize, fetchedThisPage, collectedCount) {
+  if (fetchedThisPage <= 0) return null;
+
+  const current = String(currentOffset);
+  const rawNext = paging.nextOffset;
+  const hasDistinctNext = rawNext != null && String(rawNext) !== '' && String(rawNext) !== current;
+  const hasMoreTotals = paging.totals != null && collectedCount < paging.totals;
+
+  if (paging.isEnd === true && !hasMoreTotals) return null;
+  if (hasDistinctNext) return String(rawNext);
+  if (paging.isEnd === false || hasMoreTotals || fetchedThisPage >= pageSize) {
+    const numeric = Number(currentOffset);
+    if (Number.isFinite(numeric)) return String(numeric + pageSize);
+  }
+  return null;
+}
+
+async function sendRuntimeMessage(message) {
+  return chrome.runtime.sendMessage(message);
+}
+
+async function refreshOpenPlatformStatus() {
+  try {
+    const result = await sendRuntimeMessage({ type: 'getOpenPlatformStatus' });
+    if (!result?.ok) {
+      state.openPlatform = { configured: false, masked: '', mySlug: '' };
+      setStatus(els.openPlatformStatus, '读取失败', false);
+      if (els.openPlatformHint) els.openPlatformHint.textContent = result?.error || '无法读取开放平台状态。';
+      return state.openPlatform;
+    }
+    state.openPlatform = {
+      configured: Boolean(result.configured),
+      masked: result.masked || '',
+      mySlug: result.mySlug || '',
+    };
+    if (els.mySlugInput && document.activeElement !== els.mySlugInput) {
+      els.mySlugInput.value = state.openPlatform.mySlug;
+    }
+    if (els.accessSecretInput && !els.accessSecretInput.value && result.masked) {
+      els.accessSecretInput.placeholder = result.masked;
+    }
+    setStatus(
+      els.openPlatformStatus,
+      result.configured ? (result.masked || '已配置') : '未配置',
+      result.configured ? true : null
+    );
+    if (els.openPlatformHint) {
+      els.openPlatformHint.textContent = result.configured
+        ? `已保存 ${result.masked}。探测会消耗少量额度。`
+        : '未配置。配置后可导出收藏夹，并在自己的主页走官方目录。';
+    }
+    return state.openPlatform;
+  } catch {
+    setStatus(els.openPlatformStatus, '读取失败', false);
+    return state.openPlatform;
+  }
+}
+
+async function openPlatformRequest(path, query, method = 'GET') {
+  const result = await sendRuntimeMessage({ type: 'openPlatformRequest', method, path, query });
+  if (!result?.ok) throw new Error(result?.error || '开放平台请求失败');
+  return result.data || {};
+}
+
+function shouldUseOfficialContents() {
+  const mySlug = state.openPlatform.mySlug;
+  return Boolean(state.openPlatform.configured && mySlug && state.slug && mySlug === state.slug);
+}
+
+async function detectMySlugFromPage() {
+  if (!state.tab?.id || !/zhihu\.com/.test(state.tab.url || '')) return '';
+  try {
+    const [result] = await chrome.scripting.executeScript({
+      target: { tabId: state.tab.id },
+      func: async () => {
+        try {
+          const response = await fetch('/api/v4/me', {
+            credentials: 'include',
+            headers: { 'X-Requested-With': 'Fetch' },
+          });
+          if (!response.ok) return '';
+          const data = await response.json();
+          return data.url_token || data.urlToken || '';
+        } catch {
+          return '';
+        }
+      },
+    });
+    return result?.result || '';
+  } catch {
+    return '';
+  }
+}
+
+async function maybeFillMySlug() {
+  if (state.openPlatform.mySlug || !state.openPlatform.configured) return;
+  const slug = await detectMySlugFromPage();
+  if (!slug) return;
+  const result = await sendRuntimeMessage({ type: 'saveMySlug', slug });
+  if (result?.ok) {
+    state.openPlatform.mySlug = slug;
+    if (els.mySlugInput) els.mySlugInput.value = slug;
+  }
+}
+
+function syncModeChrome() {
+  if (els.favlistPicker) els.favlistPicker.hidden = !isCollectionsMode();
+  if (els.collectButton) {
+    els.collectButton.textContent = isCollectionsMode() ? '加载收藏夹内容' : '采集 / 刷新链接';
+  }
+}
+
+function renderFavlistSelect() {
+  if (!els.favlistSelect) return;
+  const options = ['<option value="">选择一个收藏夹</option>']
+    .concat(state.favlists.map((folder) => {
+      const token = String(folder.urlToken || '');
+      const title = folder.title || `收藏夹 ${token}`;
+      const selected = token && token === String(state.selectedFavlistToken) ? ' selected' : '';
+      return `<option value="${escapeHtml(token)}"${selected}>${escapeHtml(title)}</option>`;
+    }));
+  els.favlistSelect.innerHTML = options.join('');
+}
+
+async function persistCurrentItems() {
+  const key = cacheKey(state.slug);
+  await storageSet({
+    [key]: {
+      items: state.items,
+      urls: state.urls,
+      remoteTotal: state.remoteTotal,
+      lastCollectedAt: state.lastCollectedAt,
+      selectedFavlistToken: state.selectedFavlistToken,
+    },
+  });
+}
+
+async function applyCollectedItems(collectedItems, remoteTotal, options = {}) {
+  const previousUrls = new Set(state.urls);
+  const collected = normalizeItems(collectedItems);
+  const collectedUrls = new Set(itemUrls(collected));
+  const existingItems = options.authoritative
+    ? state.items.filter((item) => collectedUrls.has(item.url))
+    : state.items;
+  const merged = mergeItems(existingItems, collected);
+  const added = merged.filter((item) => !previousUrls.has(item.url)).length;
+  const removed = options.authoritative ? Math.max(0, previousUrls.size + added - merged.length) : 0;
+
+  state.items = merged;
+  state.urls = itemUrls(state.items);
+  state.remoteTotal = Number.isFinite(remoteTotal) ? remoteTotal : state.remoteTotal;
+  state.selected = new Set(
+    state.urls.filter((url) => {
+      const item = state.items.find((entry) => entry.url === url);
+      return !item?.unsupportedReason;
+    })
+  );
+  state.lastCollectedAt = new Date().toISOString();
+  await persistCurrentItems();
+  renderUrls();
+  return { added, removed };
+}
+
+function emptyListMessage() {
+  if (isCollectionsMode()) {
+    if (!state.openPlatform.configured) return '请先在上方配置 Access Secret，再加载收藏夹。';
+    if (!state.selectedFavlistToken) return '先刷新收藏夹列表并选中一个收藏夹，再加载内容。';
+    return '这个收藏夹还没有缓存内容。点击“加载收藏夹内容”。';
+  }
+  return `当前主页还没有缓存的${typeLabel()}链接。`;
+}
+
+// ============================
 // Cache loading / switching
 // ============================
+async function loadFavlistCache() {
+  const stored = await storageGet([favlistsCacheKey()]);
+  const cached = stored[favlistsCacheKey()] || {};
+  state.favlists = Array.isArray(cached.items) ? cached.items : [];
+  if (!state.selectedFavlistToken && cached.lastToken) {
+    state.selectedFavlistToken = String(cached.lastToken);
+  }
+  if (state.selectedFavlistToken && !state.favlists.some((folder) => String(folder.urlToken) === String(state.selectedFavlistToken))) {
+    state.selectedFavlistToken = state.favlists[0] ? String(state.favlists[0].urlToken) : '';
+  }
+  renderFavlistSelect();
+}
+
 async function loadCacheForActiveTab() {
   state.tab = await getActiveTab();
   state.slug = getSlugFromUrl(state.tab?.url || '');
+  syncModeChrome();
+
+  if (isCollectionsMode()) {
+    els.activeTabText.textContent = state.openPlatform.configured
+      ? (state.openPlatform.mySlug || '收藏夹（开放平台）')
+      : '收藏夹需要 Access Secret';
+    await loadFavlistCache();
+    if (!state.selectedFavlistToken) {
+      state.items = [];
+      state.urls = [];
+      state.remoteTotal = null;
+      state.lastCollectedAt = '';
+      state.selected.clear();
+      renderUrls();
+      return;
+    }
+    const key = cacheKey(state.slug);
+    const result = await storageGet([key]);
+    const cached = result[key] || {};
+    state.items = loadCachedItems(cached);
+    state.urls = itemUrls(state.items);
+    state.lastCollectedAt = cached.lastCollectedAt || '';
+    state.remoteTotal = Number.isFinite(cached.remoteTotal) ? cached.remoteTotal : null;
+    state.selected = new Set(state.urls.filter((url) => {
+      const item = state.items.find((entry) => entry.url === url);
+      return !item?.unsupportedReason;
+    }));
+    renderUrls();
+    return;
+  }
 
   if (!state.slug) {
     els.activeTabText.textContent = '请打开知乎 /people/... 个人主页标签页。';
@@ -631,7 +1088,9 @@ async function loadCacheForActiveTab() {
     return;
   }
 
-  els.activeTabText.textContent = state.slug;
+  els.activeTabText.textContent = shouldUseOfficialContents()
+    ? `${state.slug}（官方目录）`
+    : state.slug;
   const result = await storageGet([cacheKey(state.slug)]);
   const cached = result[cacheKey(state.slug)] || {};
   state.items = loadCachedItems(cached);
@@ -648,16 +1107,12 @@ async function switchType(type) {
   state.dateFilterFrom = '';
   state.dateFilterTo = '';
   syncDateFilterInputs();
-  // Update button states
   document.querySelectorAll('.type-btn').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.type === type);
   });
-  // Reload cache for new type
   await loadCacheForActiveTab();
-  // Update empty message
   if (state.items.length === 0) {
-    const config = currentConfig();
-    els.urlList.innerHTML = `<div class="empty">当前主页还没有缓存的${config.label}链接。</div>`;
+    els.urlList.innerHTML = `<div class="empty">${emptyListMessage()}</div>`;
   }
 }
 
@@ -1121,6 +1576,246 @@ async function scrapeContentFromPage(type, runId) {
   return { slug, items, urls: items.map((item) => item.url), remoteTotal, authoritative: apiSucceeded };
 }
 
+async function scrapeCollectionFromPage(collectionId, runId) {
+  const limit = 20;
+  const delayMs = 600;
+  const prefix = '[ZhihuExporter][favlist][page]';
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const log = (event, details) => {
+    if (details === undefined) console.log(`${prefix} ${event}`);
+    else console.log(`${prefix} ${event}`, details);
+  };
+  const compactPaging = (paging) => {
+    if (!paging || typeof paging !== 'object') return paging;
+    return {
+      keys: Object.keys(paging),
+      is_end: paging.is_end,
+      isEnd: paging.isEnd,
+      totals: paging.totals,
+      Totals: paging.Totals,
+      next_offset: paging.next_offset,
+      nextOffset: paging.nextOffset,
+      next: paging.next ? String(paging.next).slice(0, 180) : paging.next,
+    };
+  };
+  const sampleEntry = (entry) => {
+    const content = entry?.content || entry?.target || {};
+    return {
+      entryKeys: entry && typeof entry === 'object' ? Object.keys(entry) : [],
+      type: content.type || entry?.type || '',
+      id: content.id ?? entry?.id ?? null,
+      url: content.url || '',
+      title: content.question?.title || content.title || '',
+    };
+  };
+  const report = (payload) => {
+    try {
+      chrome.runtime.sendMessage({ type: 'collectionProgress', runId, ...payload });
+    } catch (error) {
+      log('progress-message-failed', { message: error?.message || String(error) });
+    }
+  };
+
+  log('start', {
+    collectionId,
+    runId,
+    href: location.href,
+    cookieLength: document.cookie.length,
+    hasZc0InDocumentCookie: /(?:^|;\s*)z_c0=/.test(document.cookie),
+    note: 'z_c0 is usually HttpOnly, so document.cookie may not show it even when logged in',
+  });
+
+  const endpoints = [
+    (offset) => `/api/v4/collections/${encodeURIComponent(collectionId)}/items?offset=${offset}&limit=${limit}`,
+    (offset) => `/api/v4/favlists/${encodeURIComponent(collectionId)}/items?offset=${offset}&limit=${limit}`,
+  ];
+
+  let lastError = '';
+  const debug = {
+    href: location.href,
+    collectionId,
+    endpointsTried: [],
+    pages: [],
+    stopReason: '',
+  };
+
+  for (const buildUrl of endpoints) {
+    const items = [];
+    const seen = new Set();
+    let remoteTotal = 0;
+    let pages = 0;
+    let offset = 0;
+    let nextUrl = buildUrl(0);
+    lastError = '';
+    const endpointName = nextUrl.split('?')[0];
+    debug.endpointsTried.push(endpointName);
+    log('try-endpoint', { endpoint: endpointName });
+
+    while (nextUrl && pages < 500) {
+      const requestUrl = nextUrl;
+      log('fetch', { page: pages + 1, offset, url: requestUrl });
+      const response = await fetch(requestUrl, {
+        credentials: 'include',
+        headers: { 'X-Requested-With': 'Fetch' },
+      });
+      const contentType = response.headers.get('content-type') || '';
+      const rawText = await response.text();
+      const bodyPreview = String(rawText || '').replace(/\s+/g, ' ').trim().slice(0, 240);
+      if (response.status === 404 || response.status === 400) {
+        lastError = `HTTP ${response.status}`;
+        debug.stopReason = lastError;
+        log('http-skip-endpoint', { status: response.status, contentType, url: requestUrl, bodyPreview });
+        break;
+      }
+      if (!response.ok) {
+        debug.stopReason = `HTTP ${response.status}`;
+        log('http-error', { status: response.status, contentType, url: requestUrl, bodyPreview });
+        throw new Error(`收藏夹站内接口 HTTP ${response.status}`);
+      }
+
+      let json = null;
+      try {
+        json = rawText ? JSON.parse(rawText) : {};
+      } catch (error) {
+        debug.stopReason = 'response_not_json';
+        log('json-parse-failed', { url: requestUrl, contentType, bodyPreview, message: error?.message || String(error) });
+        throw new Error('收藏夹站内接口返回的不是 JSON');
+      }
+      if (json?.error) {
+        debug.stopReason = json.error.message || json.error.code || 'json.error';
+        log('json-error', json.error);
+        throw new Error(json.error.message || `收藏夹站内接口错误 ${json.error.code || ''}`.trim());
+      }
+      const batch = Array.isArray(json.data) ? json.data : [];
+      const paging = json.paging || json.Paging || {};
+      pages += 1;
+      remoteTotal = Number(paging.totals ?? paging.Totals) || remoteTotal;
+
+      let added = 0;
+      for (const entry of batch) {
+        const content = entry?.content || entry?.target || entry || {};
+        const key = String(content.id || content.url || entry?.id || `${pages}-${added}`);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        items.push(entry);
+        added += 1;
+      }
+
+      const pageInfo = {
+        page: pages,
+        url: requestUrl,
+        jsonKeys: json && typeof json === 'object' ? Object.keys(json) : [],
+        dataLength: batch.length,
+        added,
+        uniqueTotal: items.length,
+        remoteTotal,
+        paging: compactPaging(paging),
+        zhihuPaging: compactPaging(json.paging),
+        sample: batch[0] ? sampleEntry(batch[0]) : null,
+      };
+      debug.pages.push(pageInfo);
+      log('page', pageInfo);
+
+      report({
+        phase: 'api',
+        fetched: items.length,
+        total: remoteTotal || null,
+        page: pages,
+        message: remoteTotal ? `${items.length} / ${remoteTotal} 条收藏` : `已获取 ${items.length} 条收藏`,
+      });
+
+      const isEnd = paging.is_end === true || paging.isEnd === true;
+      if (isEnd) {
+        debug.stopReason = 'is_end';
+        log('stop', { reason: debug.stopReason, uniqueTotal: items.length, remoteTotal });
+        break;
+      }
+      if (!batch.length) {
+        debug.stopReason = 'empty_batch';
+        log('stop', { reason: debug.stopReason, uniqueTotal: items.length, remoteTotal });
+        break;
+      }
+      if (added === 0) {
+        debug.stopReason = 'no_new_items';
+        log('stop', { reason: debug.stopReason, uniqueTotal: items.length, remoteTotal, hint: 'API likely returned a repeated first page' });
+        break;
+      }
+
+      const rawNext = String(paging.next || paging.Next || '').trim();
+      const nextOffset = Number(paging.next_offset ?? paging.nextOffset);
+      const previousUrl = nextUrl;
+      if (rawNext) {
+        try {
+          const parsed = new URL(rawNext, window.location.origin);
+          parsed.protocol = 'https:';
+          const upcoming = Number(parsed.searchParams.get('offset'));
+          if (Number.isFinite(upcoming) && upcoming <= offset) {
+            debug.stopReason = 'next_offset_not_advancing';
+            log('stop', { reason: debug.stopReason, offset, upcoming, next: parsed.toString() });
+            nextUrl = '';
+            break;
+          }
+          nextUrl = parsed.toString();
+          offset = Number.isFinite(upcoming) ? upcoming : offset + limit;
+        } catch (error) {
+          debug.stopReason = 'next_parse_failed';
+          log('stop', { reason: debug.stopReason, rawNext, message: error?.message || String(error) });
+          nextUrl = '';
+          break;
+        }
+      } else if (Number.isFinite(nextOffset) && nextOffset > offset) {
+        offset = nextOffset;
+        nextUrl = buildUrl(offset);
+      } else {
+        offset += limit;
+        nextUrl = buildUrl(offset);
+      }
+      if (!nextUrl || nextUrl === previousUrl) {
+        debug.stopReason = 'no_next_url';
+        log('stop', { reason: debug.stopReason, uniqueTotal: items.length });
+        break;
+      }
+      log('next', { offset, nextUrl });
+      await sleep(delayMs);
+    }
+
+    if (items.length) {
+      debug.stopReason = debug.stopReason || 'completed';
+      log('done', {
+        endpoint: endpointName,
+        pages,
+        uniqueTotal: items.length,
+        remoteTotal,
+        stopReason: debug.stopReason,
+      });
+      try {
+        window.__ZHIHU_EXPORTER_LAST_FAVLIST_DEBUG__ = debug;
+      } catch {
+        // Ignore.
+      }
+      return { items, remoteTotal, pages, debug };
+    }
+    log('endpoint-empty', { endpoint: endpointName, lastError, pages });
+  }
+
+  if (lastError) {
+    log('failed', { lastError, debug });
+    try {
+      window.__ZHIHU_EXPORTER_LAST_FAVLIST_DEBUG__ = debug;
+    } catch {
+      // Ignore.
+    }
+    throw new Error(`收藏夹站内接口不可用：${lastError}`);
+  }
+  log('empty', { debug });
+  try {
+    window.__ZHIHU_EXPORTER_LAST_FAVLIST_DEBUG__ = debug;
+  } catch {
+    // Ignore.
+  }
+  return { items: [], remoteTotal: 0, pages: 0, debug };
+}
+
 // ============================
 // Hydrate missing previews (injected into profile page)
 // ============================
@@ -1246,16 +1941,427 @@ async function hydratePreviewsFromPage(type, runId, rawItems) {
 // ============================
 // Collect URLs (orchestrator)
 // ============================
+async function collectOfficialContents() {
+  const contentType = OFFICIAL_CONTENT_TYPE[state.currentType];
+  if (!contentType) throw new Error('当前类型不支持官方目录。');
+
+  const pageSize = 50;
+  let offset = '0';
+  const items = [];
+  const seen = new Set();
+  let remoteTotal = null;
+  let page = 0;
+
+  while (page < 500) {
+    page += 1;
+    const data = await openPlatformRequest('/api/v1/user/contents', {
+      ContentType: contentType,
+      Limit: pageSize,
+      Offset: offset,
+      SortField: 'ts',
+      SortOrder: 'desc',
+    });
+    const paging = readPaging(data);
+    let fetchedThisPage = 0;
+    paging.items.forEach((item) => {
+      const local = officialItemToLocal(item);
+      if (!local.url) return;
+      if (seen.has(local.url)) return;
+      seen.add(local.url);
+      items.push(local);
+      fetchedThisPage += 1;
+    });
+    remoteTotal = paging.totals ?? remoteTotal;
+    setProgress(
+      els.collectProgressFill,
+      els.collectProgressText,
+      remoteTotal ? (items.length / remoteTotal) * 100 : Math.min(95, page * 10),
+      remoteTotal ? `${items.length} / ${remoteTotal} 条` : `已获取 ${items.length} 条`
+    );
+    const nextOffset = nextPageOffset(paging, offset, pageSize, fetchedThisPage, items.length);
+    if (nextOffset == null) break;
+    offset = nextOffset;
+  }
+
+  const { added, removed } = await applyCollectedItems(items, remoteTotal, { authoritative: true });
+  const totalHint = remoteTotal && remoteTotal > state.urls.length ? `，接口总数 ${remoteTotal}` : '';
+  els.lastCollectedText.textContent = `官方目录新增 ${added} 条${removed ? `，清理 ${removed} 条旧缓存` : ''}${totalHint}，${formatTime(state.lastCollectedAt)}`;
+  setProgress(els.collectProgressFill, els.collectProgressText, 100, `已缓存 ${state.urls.length} 条`);
+}
+
+async function collectFavlists() {
+  const data = await openPlatformRequest('/api/v1/user/favlists', { Limit: 50 });
+  state.favlists = (data.Items || []).map((item) => ({
+    urlToken: item.UrlToken,
+    url: item.Url || '',
+    title: item.Title || `收藏夹 ${item.UrlToken}`,
+    description: item.Description || '',
+    isPublic: Boolean(item.IsPublic),
+  }));
+  if (!state.selectedFavlistToken && state.favlists[0]) {
+    state.selectedFavlistToken = String(state.favlists[0].urlToken);
+  }
+  await storageSet({
+    [favlistsCacheKey()]: {
+      items: state.favlists,
+      lastToken: state.selectedFavlistToken,
+      lastCollectedAt: new Date().toISOString(),
+    },
+  });
+  renderFavlistSelect();
+  return state.favlists.length;
+}
+
+async function findZhihuContentTabId() {
+  if (state.tab?.id && /^https:\/\/(?:www|zhuanlan)\.zhihu\.com\//i.test(state.tab.url || '')) {
+    return state.tab.id;
+  }
+  const tabs = await chrome.tabs.query({
+    url: ['https://www.zhihu.com/*', 'https://zhuanlan.zhihu.com/*'],
+  });
+  return tabs[0]?.id || null;
+}
+
+function waitForTabComplete(tabId, timeoutMs = 20000) {
+  return new Promise((resolve, reject) => {
+    const started = Date.now();
+    const poll = async () => {
+      try {
+        const tab = await chrome.tabs.get(tabId);
+        if (tab.status === 'complete') {
+          resolve(tab);
+          return;
+        }
+      } catch (error) {
+        reject(error);
+        return;
+      }
+      if (Date.now() - started > timeoutMs) {
+        reject(new Error('知乎页面加载超时'));
+        return;
+      }
+      setTimeout(poll, 250);
+    };
+    poll();
+  });
+}
+
+async function ensureZhihuCollectionTab(collectionId) {
+  const existingId = await findZhihuContentTabId();
+  if (existingId) return existingId;
+  const created = await chrome.tabs.create({
+    url: `https://www.zhihu.com/collection/${encodeURIComponent(collectionId)}`,
+    active: false,
+  });
+  if (!created?.id) throw new Error('无法打开收藏夹页面。');
+  await waitForTabComplete(created.id);
+  return created.id;
+}
+
+async function collectOfficialFavlistContents(folder, extra) {
+  const pageSize = 20;
+  let offset = '0';
+  const items = [];
+  const seen = new Set();
+  let remoteTotal = null;
+  let page = 0;
+
+  favlistLog('official-start', {
+    favlistUrlToken: state.selectedFavlistToken,
+    title: folder?.title || extra.favlistTitle || '',
+  });
+
+  while (page < 500) {
+    page += 1;
+    const data = await openPlatformRequest('/api/v1/user/favlist_contents', {
+      FavlistUrlToken: state.selectedFavlistToken,
+      Offset: offset,
+      Limit: pageSize,
+    });
+    const paging = readPaging(data);
+    let fetchedThisPage = 0;
+    paging.items.forEach((item, index) => {
+      const local = officialItemToLocal(item, {
+        ...extra,
+        favlistTitle: extra.favlistTitle || folder?.title || item.Favlists?.[0]?.Title || '',
+        author: item.Author?.Name || '',
+      });
+      if (!local.url) {
+        local.url = `zhihu:unresolved/${state.selectedFavlistToken}/${offset}-${index}`;
+        local.unsupportedReason = local.unsupportedReason || '缺少内容链接';
+      }
+      if (seen.has(local.url)) return;
+      seen.add(local.url);
+      items.push(local);
+      fetchedThisPage += 1;
+    });
+    remoteTotal = paging.totals ?? remoteTotal;
+    const nextOffset = nextPageOffset(paging, offset, pageSize, fetchedThisPage, items.length);
+    favlistLog('official-page', {
+      page,
+      offset,
+      nextOffset,
+      batchSize: paging.items.length,
+      added: fetchedThisPage,
+      uniqueTotal: items.length,
+      remoteTotal,
+      isEnd: paging.isEnd,
+      dataKeys: data && typeof data === 'object' ? Object.keys(data) : [],
+      sample: paging.items[0]
+        ? {
+            Url: paging.items[0].Url || paging.items[0].url || '',
+            ContentType: paging.items[0].ContentType || '',
+            Title: paging.items[0].Title || '',
+          }
+        : null,
+    });
+    setProgress(
+      els.collectProgressFill,
+      els.collectProgressText,
+      remoteTotal ? (items.length / remoteTotal) * 100 : Math.min(95, page * 10),
+      remoteTotal ? `${items.length} / ${remoteTotal} 条` : `已获取 ${items.length} 条`
+    );
+    if (nextOffset == null) break;
+    offset = nextOffset;
+  }
+
+  favlistLog('official-done', {
+    uniqueTotal: items.length,
+    remoteTotal,
+    typeCounts: favlistCountBy(items, (item) => item.officialContentType || item.exportType),
+  });
+  return { items, remoteTotal };
+}
+
+async function collectSiteFavlistContents(folder, extra) {
+  const ids = collectionIdsToTry(folder, state.selectedFavlistToken);
+  let lastError = null;
+  favlistLog('site-start', {
+    favlistUrlToken: state.selectedFavlistToken,
+    folder,
+    ids,
+  });
+
+  for (const collectionId of ids) {
+    const tabId = await ensureZhihuCollectionTab(collectionId);
+    const tab = await chrome.tabs.get(tabId);
+    favlistLog('site-tab', {
+      collectionId,
+      tabId,
+      tabUrl: tab?.url || '',
+      tabStatus: tab?.status || '',
+    });
+    const inject = (world) => chrome.scripting.executeScript({
+      target: { tabId },
+      world,
+      func: scrapeCollectionFromPage,
+      args: [String(collectionId), state.collectRunId],
+    });
+    let world = 'ISOLATED';
+    let injected = await inject(world);
+    favlistLog('site-inject', {
+      collectionId,
+      world,
+      error: injected?.[0]?.error?.message || '',
+      itemCount: injected?.[0]?.result?.items?.length || 0,
+      remoteTotal: injected?.[0]?.result?.remoteTotal || 0,
+      pages: injected?.[0]?.result?.pages || 0,
+      debug: injected?.[0]?.result?.debug || null,
+    });
+    if (injected?.[0]?.error || !(injected?.[0]?.result?.items || []).length) {
+      world = 'MAIN';
+      const mainInjected = await inject(world);
+      favlistLog('site-inject', {
+        collectionId,
+        world,
+        error: mainInjected?.[0]?.error?.message || '',
+        itemCount: mainInjected?.[0]?.result?.items?.length || 0,
+        remoteTotal: mainInjected?.[0]?.result?.remoteTotal || 0,
+        pages: mainInjected?.[0]?.result?.pages || 0,
+        debug: mainInjected?.[0]?.result?.debug || null,
+      });
+      if (!mainInjected?.[0]?.error || injected?.[0]?.error) {
+        injected = mainInjected;
+      }
+    }
+    if (injected?.[0]?.error) {
+      lastError = new Error(injected[0].error.message || '站内采集脚本失败');
+      favlistLog('site-inject-failed', { collectionId, message: lastError.message });
+      continue;
+    }
+    const result = injected?.[0]?.result || { items: [], remoteTotal: 0 };
+    const items = (result.items || []).map((entry) => v4CollectionItemToLocal(entry, extra));
+    favlistLog('site-mapped', {
+      collectionId,
+      rawCount: result.items?.length || 0,
+      mappedCount: items.length,
+      remoteTotal: result.remoteTotal || 0,
+      typeCounts: favlistCountBy(items, (item) => item.officialContentType || item.exportType),
+      unsupportedCounts: favlistCountBy(items.filter((item) => item.unsupportedReason), (item) => item.unsupportedReason),
+      sample: items.slice(0, 3).map((item) => ({
+        url: item.url,
+        title: item.title,
+        exportType: item.exportType,
+        officialContentType: item.officialContentType,
+      })),
+    });
+    if (items.length) {
+      return { items, remoteTotal: result.remoteTotal || items.length, debug: result.debug };
+    }
+  }
+
+  if (lastError) throw lastError;
+  favlistLog('site-empty', { ids });
+  return { items: [], remoteTotal: 0 };
+}
+
+async function collectFavlistContents() {
+  if (!state.selectedFavlistToken) {
+    const count = await collectFavlists();
+    els.lastCollectedText.textContent = count
+      ? `已加载 ${count} 个收藏夹，请选择后再次加载内容。`
+      : '没有公开收藏夹。';
+    setProgress(els.collectProgressFill, els.collectProgressText, 100, count ? `已加载 ${count} 个收藏夹` : '没有收藏夹');
+    renderUrls();
+    return;
+  }
+
+  const folder = state.favlists.find((entry) => String(entry.urlToken) === String(state.selectedFavlistToken));
+  const extra = {
+    favlistTitle: folder?.title || '',
+    favlistUrlToken: state.selectedFavlistToken,
+  };
+  const previousRunId = state.collectRunId;
+  state.collectRunId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  favlistLog('collect-start', {
+    runId: state.collectRunId,
+    selectedFavlistToken: state.selectedFavlistToken,
+    folder,
+    inspectHint: 'Filter Console with ZhihuExporter. Side panel logs appear here; page-injection logs appear in the Zhihu tab DevTools.',
+  });
+
+  try {
+    setProgress(els.collectProgressFill, els.collectProgressText, 0, '正在用站内接口翻页…');
+    let source = 'site-favlist';
+    let collected = { items: [], remoteTotal: 0 };
+    let siteWarning = '';
+
+    try {
+      collected = await collectSiteFavlistContents(folder, extra);
+    } catch (error) {
+      siteWarning = error.message;
+      favlistLog('site-error', { message: error.message, stack: error.stack || '' });
+    }
+
+    if (!collected.items.length) {
+      favlistLog('fallback-official', { siteWarning, siteDebug: collected.debug || null });
+      setProgress(els.collectProgressFill, els.collectProgressText, 0, '站内接口无结果，改用开放平台…');
+      collected = await collectOfficialFavlistContents(folder, extra);
+      source = 'official-favlist';
+    }
+
+    await storageSet({
+      [favlistsCacheKey()]: {
+        items: state.favlists,
+        lastToken: state.selectedFavlistToken,
+        lastCollectedAt: new Date().toISOString(),
+      },
+    });
+    const { added, removed } = await applyCollectedItems(collected.items, collected.remoteTotal, { authoritative: true });
+    const skipped = collected.items.filter((item) => item.unsupportedReason).length;
+    const sourceHint = source === 'site-favlist' ? '站内接口' : '开放平台（可能不完整）';
+    const totalHint = collected.remoteTotal && collected.remoteTotal > state.urls.length
+      ? `，接口总数 ${collected.remoteTotal}`
+      : '';
+    const skipHint = skipped ? `，${skipped} 条暂不支持导出` : '';
+    const warnHint = source === 'official-favlist' && siteWarning ? `；站内失败：${siteWarning}` : '';
+    const summary = {
+      source,
+      added,
+      removed,
+      cached: state.urls.length,
+      collected: collected.items.length,
+      remoteTotal: collected.remoteTotal,
+      skipped,
+      siteWarning,
+      typeCounts: favlistCountBy(collected.items, (item) => item.officialContentType || item.exportType),
+      siteDebug: collected.debug || null,
+    };
+    favlistLog('SUMMARY copy this object', summary);
+    globalThis.__ZHIHU_EXPORTER_LAST_FAVLIST__ = summary;
+    els.lastCollectedText.textContent = `收藏夹（${sourceHint}）新增 ${added} 条${removed ? `，清理 ${removed} 条旧缓存` : ''}${totalHint}${skipHint}${warnHint}，${formatTime(state.lastCollectedAt)}`;
+    setProgress(els.collectProgressFill, els.collectProgressText, 100, `已缓存 ${state.urls.length} 条`);
+  } catch (error) {
+    favlistLog('collect-error', { message: error.message, stack: error.stack || '' });
+    throw error;
+  } finally {
+    state.collectRunId = previousRunId;
+  }
+}
+
 async function collectUrls() {
   if (!state.tab?.id || !state.slug) {
     await loadCacheForActiveTab();
   }
+
+  if (isCollectionsMode()) {
+    if (!state.openPlatform.configured) {
+      els.lastCollectedText.textContent = '请先配置 Access Secret。';
+      setProgress(els.collectProgressFill, els.collectProgressText, 0, '未配置开放平台');
+      return;
+    }
+    els.collectButton.disabled = true;
+    els.collectButton.textContent = '加载中...';
+    setProgress(els.collectProgressFill, els.collectProgressText, 0, '正在开始...');
+    try {
+      await collectFavlistContents();
+    } catch (error) {
+      els.lastCollectedText.textContent = error.message;
+      setProgress(els.collectProgressFill, els.collectProgressText, 0, '加载失败');
+    } finally {
+      els.collectButton.disabled = false;
+      syncModeChrome();
+    }
+    return;
+  }
+
   if (!state.tab?.id || !state.slug) return;
+
+  if (shouldUseOfficialContents()) {
+    els.collectButton.disabled = true;
+    els.collectButton.textContent = '采集中...';
+    setProgress(els.collectProgressFill, els.collectProgressText, 0, '正在请求官方目录...');
+    try {
+      await collectOfficialContents();
+      if (state.currentType === 'pins' && state.tab?.id && isExpectedProfilePage(state.tab.url || '', 'pins')) {
+        try {
+          const [result] = await chrome.scripting.executeScript({
+            target: { tabId: state.tab.id },
+            func: scrapeContentFromPage,
+            args: [state.currentType, `${Date.now()}-pin-enrich`],
+          });
+          if (!result.error) {
+            await applyCollectedItems(result.result?.items || [], state.remoteTotal, { authoritative: false });
+          }
+        } catch {
+          // Official list already saved; pin cards are optional enrichment.
+        }
+      }
+      els.collectButton.disabled = false;
+      syncModeChrome();
+      return;
+    } catch (error) {
+      els.lastCollectedText.textContent = `官方目录失败，改用页面采集：${error.message}`;
+    }
+  }
+
   if (!isExpectedProfilePage(state.tab.url || '', state.currentType)) {
     const expectedSection = { answers: 'answers', articles: 'posts', pins: 'pins' }[state.currentType];
     const message = `请先打开 /people/${state.slug}/${expectedSection} 页面再采集。`;
     els.lastCollectedText.textContent = message;
     setProgress(els.collectProgressFill, els.collectProgressText, 0, '当前页面不支持采集');
+    els.collectButton.disabled = false;
+    syncModeChrome();
     return;
   }
 
@@ -1273,34 +2379,12 @@ async function collectUrls() {
     if (result.error) throw new Error(result.error.message);
 
     const collected = result.result || {};
-    const previousUrlCount = state.urls.length;
-    const previousUrls = new Set(state.urls);
-    const collectedItems = normalizeItems(collected.items || collected.urls || []);
-    const collectedUrls = new Set(itemUrls(collectedItems));
-    const existingItems = collected.authoritative
-      ? state.items.filter((item) => collectedUrls.has(item.url))
-      : state.items;
-    const merged = mergeItems(existingItems, collectedItems);
-    const added = merged.filter((item) => !previousUrls.has(item.url)).length;
-    const removed = collected.authoritative ? Math.max(0, previousUrlCount + added - merged.length) : 0;
-
     state.slug = collected.slug || state.slug;
-    state.items = merged;
-    state.urls = itemUrls(state.items);
-    state.remoteTotal = Number.isFinite(collected.remoteTotal) ? collected.remoteTotal : state.remoteTotal;
-    state.selected = new Set(state.urls);
-    state.lastCollectedAt = new Date().toISOString();
-
-    await storageSet({
-      [cacheKey(state.slug)]: {
-        items: state.items,
-        urls: state.urls,
-        remoteTotal: state.remoteTotal,
-        lastCollectedAt: state.lastCollectedAt,
-      },
-    });
-
-    renderUrls();
+    const { added, removed } = await applyCollectedItems(
+      collected.items || collected.urls || [],
+      collected.remoteTotal,
+      { authoritative: collected.authoritative }
+    );
     els.lastCollectedText.textContent = `新增 ${added} 条${removed ? `，清理 ${removed} 条旧缓存` : ''}，${formatTime(state.lastCollectedAt)}`;
     setProgress(els.collectProgressFill, els.collectProgressText, 100, `已缓存 ${state.urls.length} 条`);
   } catch (error) {
@@ -1308,7 +2392,7 @@ async function collectUrls() {
     setProgress(els.collectProgressFill, els.collectProgressText, 0, '采集失败');
   } finally {
     els.collectButton.disabled = false;
-    els.collectButton.textContent = '采集 / 刷新链接';
+    syncModeChrome();
     state.collectRunId = '';
   }
 }
@@ -1317,14 +2401,26 @@ async function collectUrls() {
 // Hydrate missing previews (orchestrator)
 // ============================
 async function hydrateMissingPreviews() {
-  if (!state.tab?.id || !state.slug) {
+  if (!state.tab?.id) {
     await loadCacheForActiveTab();
   }
-  if (!state.tab?.id || !state.slug || state.items.length === 0) return;
+  if (!state.tab?.id || state.items.length === 0) return;
+  if (!/zhihu\.com/.test(state.tab.url || '')) {
+    els.lastCollectedText.textContent = '请打开任意知乎标签页再补全预览。';
+    return;
+  }
 
   const missingCount = state.items.filter((item) => !item.snippet).length;
   if (missingCount === 0) {
     setProgress(els.collectProgressFill, els.collectProgressText, 100, '预览已全部补全');
+    return;
+  }
+
+  const typesToHydrate = isCollectionsMode()
+    ? [...new Set(state.items.filter((item) => !item.snippet && item.exportType).map((item) => item.exportType))]
+    : [state.currentType];
+  if (typesToHydrate.length === 0) {
+    setProgress(els.collectProgressFill, els.collectProgressText, 100, '没有可补全预览的条目');
     return;
   }
 
@@ -1334,23 +2430,20 @@ async function hydrateMissingPreviews() {
   setProgress(els.collectProgressFill, els.collectProgressText, 0, `0 / ${missingCount} 条预览`);
 
   try {
-    const [result] = await chrome.scripting.executeScript({
-      target: { tabId: state.tab.id },
-      func: hydratePreviewsFromPage,
-      args: [state.currentType, state.collectRunId, state.items],
-    });
-    if (result.error) throw new Error(result.error.message);
-
-    state.items = mergeItems(state.items, normalizeItems(result.result || []));
+    for (const type of typesToHydrate) {
+      const subset = isCollectionsMode()
+        ? state.items.filter((item) => item.exportType === type)
+        : state.items;
+      const [result] = await chrome.scripting.executeScript({
+        target: { tabId: state.tab.id },
+        func: hydratePreviewsFromPage,
+        args: [type, state.collectRunId, subset],
+      });
+      if (result.error) throw new Error(result.error.message);
+      state.items = mergeItems(state.items, normalizeItems(result.result || []));
+    }
     state.urls = itemUrls(state.items);
-    await storageSet({
-      [cacheKey(state.slug)]: {
-        items: state.items,
-        urls: state.urls,
-        remoteTotal: state.remoteTotal,
-        lastCollectedAt: state.lastCollectedAt,
-      },
-    });
+    await persistCurrentItems();
     renderUrls();
     setProgress(els.collectProgressFill, els.collectProgressText, 100, '预览已更新');
   } catch (error) {
@@ -1366,9 +2459,9 @@ async function hydrateMissingPreviews() {
 // ============================
 // Content URL parsing
 // ============================
-function parseContentUrl(url) {
-  const config = currentConfig();
-  const id = config.initialDataIdFromUrl(url);
+function parseContentUrl(url, type = state.currentType) {
+  const config = configFor(type);
+  const id = config.initialDataIdFromUrl ? config.initialDataIdFromUrl(url) : '';
   if (!id) return null;
   return { id };
 }
@@ -1376,9 +2469,9 @@ function parseContentUrl(url) {
 // ============================
 // Content extraction (dual-source)
 // ============================
-function extractContent(url, pageHtml) {
-  const config = currentConfig();
-  const ids = parseContentUrl(url);
+function extractContent(url, pageHtml, type = state.currentType) {
+  const config = configFor(type);
+  const ids = parseContentUrl(url, type);
   if (!ids) return null;
 
   const doc = new DOMParser().parseFromString(pageHtml, 'text/html');
@@ -1448,11 +2541,11 @@ function extractContent(url, pageHtml) {
     return Number.isNaN(millis) ? null : Math.floor(millis / 1000);
   };
   const parseDisplayedPublishTime = () => {
-    const pathPrefix = state.currentType === 'answers'
+    const pathPrefix = type === 'answers'
       ? '/answer/'
-      : state.currentType === 'articles'
+      : type === 'articles'
         ? '/p/'
-        : state.currentType === 'pins'
+        : type === 'pins'
           ? '/pin/'
           : '';
     if (!pathPrefix) return null;
@@ -1630,10 +2723,9 @@ function formatUtcTimestamp(ts) {
 // ============================
 // Build Markdown from extracted content
 // ============================
-function buildMarkdown(data) {
-  const config = currentConfig();
+function buildMarkdown(data, type = state.currentType) {
+  const config = configFor(type);
   const escapeYaml = (value) => String(value || '').replace(/"/g, '\\"');
-  const idField = state.currentType === 'answers' ? 'id' : 'id';
   const lines = [
     '---',
     `id: "${escapeYaml(data.id)}"`,
@@ -1642,6 +2734,11 @@ function buildMarkdown(data) {
     `type: ${config.frontmatterType}`,
     `source: "${escapeYaml(data.url)}"`,
   ];
+  if (data.favlistTitle) lines.push(`favlist: "${escapeYaml(data.favlistTitle)}"`);
+  if (data.favTime) {
+    const fav = formatTimestamp(data.favTime);
+    if (fav) lines.push(`fav_time: "${fav}"`);
+  }
   const created = formatTimestamp(data.createdTime);
   const updated = formatTimestamp(data.updatedTime);
   if (created) lines.push(`created: "${created}"`);
@@ -1675,8 +2772,7 @@ function sanitizeFilenamePart(value) {
     .trim() || `zhihu-${defaultName}`;
 }
 
-function buildFilename(data) {
-  const config = currentConfig();
+function buildFilename(data, type = state.currentType) {
   return `${sanitizeFilenamePart(data.title)}-${data.id}.md`;
 }
 
@@ -1816,11 +2912,15 @@ function downloadBlob(blob, filename) {
 
 function selectedItems() {
   const visibleUrls = new Set(filteredItems().map((item) => item.url));
-  return state.items.filter((item) => state.selected.has(item.url) && visibleUrls.has(item.url));
+  return state.items.filter((item) => (
+    state.selected.has(item.url)
+    && visibleUrls.has(item.url)
+    && !item.unsupportedReason
+  ));
 }
 
-async function processItemMarkdownAndImages(content, config, files, downloadImages, signal, appendLog) {
-  let markdown = buildMarkdown(content);
+async function processItemMarkdownAndImages(content, config, files, downloadImages, signal, appendLog, type = state.currentType) {
+  let markdown = buildMarkdown(content, type);
   if (downloadImages && content.html) {
     const imageUrls = extractImageUrlsFromHtml(content.html);
     if (imageUrls.length > 0) {
@@ -1840,7 +2940,7 @@ async function processItemMarkdownAndImages(content, config, files, downloadImag
       }
     }
   }
-  files.push({ name: `${config.folderName}/${buildFilename(content)}`, data: markdown });
+  files.push({ name: `${config.folderName}/${buildFilename(content, type)}`, data: markdown });
 }
 
 // ============================
@@ -1865,10 +2965,12 @@ async function exportSelectedZip() {
   setExportProgressVisible(true);
   setProgress(els.exportProgressFill, els.exportProgressText, 0, `0 / ${items.length}`);
 
-  const config = currentConfig();
   const files = [];
   const failures = [];
   const downloadImages = els.downloadImagesCheckbox ? els.downloadImagesCheckbox.checked : true;
+  const zipLabel = isCollectionsMode()
+    ? `collections_${state.selectedFavlistToken || 'export'}`
+    : `${currentConfig().labelEn}_${state.slug || 'export'}`;
 
   try {
     for (let index = 0; index < items.length; index++) {
@@ -1877,9 +2979,13 @@ async function exportSelectedZip() {
         throw new Error('导出已取消。');
       }
 
-      // Pins do not have a reliable standalone detail page. Prefer the complete
-      // card cached during collection and fall back to the visible preview text.
-      if (state.currentType === 'pins' && (item.contentHtml || item.snippet)) {
+      const exportType = item.exportType || inferExportType(item.url, item.officialContentType) || (isCollectionsMode() ? '' : state.currentType);
+      const config = exportType ? configFor(exportType) : currentConfig();
+      if (!exportType || item.unsupportedReason) {
+        const error = item.unsupportedReason || '暂不支持该类型的全文导出';
+        failures.push({ url: item.url, error });
+        appendLog(`跳过 ${item.url}：${error}`);
+      } else if (exportType === 'pins' && (item.contentHtml || item.snippet)) {
         appendLog(`使用缓存内容：${item.url}`);
         try {
           const pinId = item.url.match(/\/pin\/(\d+)/)?.[1] || item.title.replace(/^想法/, '') || '';
@@ -1896,8 +3002,10 @@ async function exportSelectedZip() {
             favoriteCount: item.favoriteCount ?? null,
             commentCount: item.commentCount ?? null,
             thanksCount: item.thanksCount ?? null,
+            favTime: item.favTime || null,
+            favlistTitle: item.favlistTitle || '',
           };
-          await processItemMarkdownAndImages(content, config, files, downloadImages, state.exportAbortController.signal, appendLog);
+          await processItemMarkdownAndImages(content, config, files, downloadImages, state.exportAbortController.signal, appendLog, exportType);
           appendLog(`已加入：${content.title}`);
         } catch (error) {
           failures.push({ url: item.url, error: error.message });
@@ -1912,15 +3020,21 @@ async function exportSelectedZip() {
           });
           if (!response.ok) throw new Error(`请求失败：HTTP ${response.status}`);
           const html = await response.text();
-          const content = extractContent(item.url, html);
+          const content = extractContent(item.url, html, exportType);
           if (content) {
             for (const field of ['createdTime', 'updatedTime', 'voteCount', 'likeCount', 'favoriteCount', 'commentCount', 'thanksCount']) {
               content[field] = content[field] ?? item[field] ?? null;
             }
+            content.favTime = item.favTime || null;
+            content.favlistTitle = item.favlistTitle || '';
           }
           if (!content) throw new Error(`无法提取${config.label}内容。`);
-          const markdown = buildMarkdown(content);
-          files.push({ name: `${config.folderName}/${buildFilename(content)}`, data: markdown });
+          if (isCollectionsMode() || exportType === 'pins') {
+            await processItemMarkdownAndImages(content, config, files, downloadImages, state.exportAbortController.signal, appendLog, exportType);
+          } else {
+            const markdown = buildMarkdown(content, exportType);
+            files.push({ name: `${config.folderName}/${buildFilename(content, exportType)}`, data: markdown });
+          }
           appendLog(`已加入：${content.title}`);
         } catch (error) {
           failures.push({ url: item.url, error: error.message });
@@ -1945,7 +3059,7 @@ async function exportSelectedZip() {
     appendLog('正在打包 ZIP...');
     const zipBlob = createZipBlob(files);
     const datePart = new Date().toISOString().slice(0, 10);
-    const filename = `zhihu_${config.labelEn}_${state.slug || 'export'}_${datePart}.zip`;
+    const filename = `zhihu_${zipLabel}_${datePart}.zip`;
     await downloadBlob(zipBlob, filename);
 
     els.jobStatus.textContent = failures.length ? 'ZIP 已下载，但有失败项' : 'ZIP 已下载';
@@ -1974,7 +3088,7 @@ function renderUrls() {
   els.lastCollectedText.textContent = state.lastCollectedAt ? formatTime(state.lastCollectedAt) : '';
 
   if (state.items.length === 0) {
-    els.urlList.innerHTML = `<div class="empty">当前主页还没有缓存的${config.label}链接。</div>`;
+    els.urlList.innerHTML = `<div class="empty">${emptyListMessage()}</div>`;
     renderSelection();
     return;
   }
@@ -1989,13 +3103,24 @@ function renderUrls() {
     .map((item) => {
       const index = state.items.findIndex((entry) => entry.url === item.url);
       const checked = state.selected.has(item.url) ? 'checked' : '';
-      const title = item.title || `未命名知乎${config.label}`;
-      const snippet = item.snippet || `还没有采集到预览内容。可点击"补全预览"。`;
+      const typeLabelText = item.exportType ? configFor(item.exportType).label : config.label;
+      const title = item.title || `未命名知乎${typeLabelText}`;
+      const snippet = item.unsupportedReason
+        || item.snippet
+        || `还没有采集到预览内容。可点击"补全预览"。`;
       const createdLabel = formatCreatedDate(item.createdTime);
-      const metaText = createdLabel ? `发布于 ${createdLabel}` : '发布时间未知';
+      const favLabel = formatCreatedDate(item.favTime);
+      const metaParts = [
+        createdLabel ? `发布于 ${createdLabel}` : '',
+        favLabel ? `收藏于 ${favLabel}` : '',
+        item.favlistTitle || '',
+        item.unsupportedReason || '',
+      ].filter(Boolean);
+      const metaText = metaParts.join(' · ') || '发布时间未知';
+      const unsupportedClass = item.unsupportedReason ? ' is-unsupported' : '';
       return `
-        <label class="url-item">
-          <input type="checkbox" data-index="${index}" ${checked}>
+        <label class="url-item${unsupportedClass}">
+          <input type="checkbox" data-index="${index}" ${checked} ${item.unsupportedReason ? 'disabled' : ''}>
           <span class="url-content">
             <strong class="url-title">${escapeHtml(title)}</strong>
             <span class="url-snippet">${escapeHtml(snippet)}</span>
@@ -2051,7 +3176,7 @@ chrome.runtime.onMessage.addListener((message) => {
 // Clear cache
 // ============================
 async function clearCurrentCache() {
-  if (!state.slug) return;
+  if (!isCollectionsMode() && !state.slug) return;
   await storageRemove([cacheKey(state.slug)]);
   state.items = [];
   state.urls = [];
@@ -2066,15 +3191,19 @@ async function clearCurrentCache() {
 // Event wiring
 // ============================
 els.refreshButton.addEventListener('click', async () => {
+  await refreshOpenPlatformStatus();
   await loadCacheForActiveTab();
   await checkCookie();
+  await maybeFillMySlug();
 });
 
 els.collectButton.addEventListener('click', collectUrls);
 els.hydrateButton.addEventListener('click', hydrateMissingPreviews);
 
 els.selectAllButton.addEventListener('click', () => {
-  filteredItems().forEach((item) => state.selected.add(item.url));
+  filteredItems().forEach((item) => {
+    if (!item.unsupportedReason) state.selected.add(item.url);
+  });
   renderUrls();
 });
 
@@ -2117,6 +3246,122 @@ els.typeSelector.addEventListener('click', (event) => {
   if (type) switchType(type);
 });
 
+if (els.openPlatformToggle && els.openPlatformBody) {
+  els.openPlatformToggle.addEventListener('click', () => {
+    const expanded = els.openPlatformToggle.getAttribute('aria-expanded') === 'true';
+    els.openPlatformToggle.setAttribute('aria-expanded', String(!expanded));
+    els.openPlatformBody.hidden = expanded;
+  });
+}
+
+if (els.saveSecretButton) {
+  els.saveSecretButton.addEventListener('click', async () => {
+    const secret = els.accessSecretInput.value.trim();
+    const result = await sendRuntimeMessage({ type: 'saveAccessSecret', secret });
+    if (!result?.ok) {
+      els.openPlatformHint.textContent = result?.error || '保存失败';
+      setStatus(els.openPlatformStatus, '保存失败', false);
+      return;
+    }
+    els.accessSecretInput.value = '';
+    await refreshOpenPlatformStatus();
+    await maybeFillMySlug();
+    els.openPlatformHint.textContent = '已保存。建议点一次探测连接确认可用。';
+  });
+}
+
+if (els.clearSecretButton) {
+  els.clearSecretButton.addEventListener('click', async () => {
+    await sendRuntimeMessage({ type: 'clearAccessSecret' });
+    if (els.accessSecretInput) {
+      els.accessSecretInput.value = '';
+      els.accessSecretInput.placeholder = '粘贴个人中心的 Access Secret';
+    }
+    await refreshOpenPlatformStatus();
+  });
+}
+
+if (els.probeSecretButton) {
+  els.probeSecretButton.addEventListener('click', async () => {
+    els.probeSecretButton.disabled = true;
+    els.openPlatformHint.textContent = '正在探测...';
+    try {
+      const typedSecret = els.accessSecretInput?.value?.trim() || '';
+      if (typedSecret) {
+        const saved = await sendRuntimeMessage({ type: 'saveAccessSecret', secret: typedSecret });
+        if (!saved?.ok) {
+          setStatus(els.openPlatformStatus, '探测失败', false);
+          els.openPlatformHint.textContent = saved?.error || '请先保存 Access Secret 再探测。';
+          return;
+        }
+        els.accessSecretInput.value = '';
+        await refreshOpenPlatformStatus();
+      }
+      const result = await sendRuntimeMessage({ type: 'probeAccessSecret' });
+      if (!result?.ok) {
+        setStatus(els.openPlatformStatus, '探测失败', false);
+        els.openPlatformHint.textContent = result?.error || '探测失败。若尚未保存 Secret，请先保存再点探测。';
+        return;
+      }
+      setStatus(els.openPlatformStatus, state.openPlatform.masked || '已连接', true);
+      els.openPlatformHint.textContent = result.message || 'Access Secret 可用';
+    } catch (error) {
+      setStatus(els.openPlatformStatus, '探测失败', false);
+      els.openPlatformHint.textContent = error.message || '探测失败';
+    } finally {
+      els.probeSecretButton.disabled = false;
+    }
+  });
+}
+
+if (els.saveMySlugButton) {
+  els.saveMySlugButton.addEventListener('click', async () => {
+    const slug = els.mySlugInput.value.trim();
+    const result = await sendRuntimeMessage({ type: 'saveMySlug', slug });
+    if (!result?.ok) {
+      els.openPlatformHint.textContent = result?.error || '保存 slug 失败';
+      return;
+    }
+    await refreshOpenPlatformStatus();
+    els.openPlatformHint.textContent = slug
+      ? `已记录你的 slug：${slug}。打开自己的主页采集时会优先走官方目录。`
+      : '已清除我的 slug。';
+    if (!isCollectionsMode()) await loadCacheForActiveTab();
+  });
+}
+
+if (els.refreshFavlistsButton) {
+  els.refreshFavlistsButton.addEventListener('click', async () => {
+    if (!state.openPlatform.configured) {
+      els.lastCollectedText.textContent = '请先配置 Access Secret。';
+      return;
+    }
+    els.refreshFavlistsButton.disabled = true;
+    try {
+      const count = await collectFavlists();
+      els.lastCollectedText.textContent = count ? `已加载 ${count} 个收藏夹` : '没有公开收藏夹';
+      await loadCacheForActiveTab();
+    } catch (error) {
+      els.lastCollectedText.textContent = error.message;
+    } finally {
+      els.refreshFavlistsButton.disabled = false;
+    }
+  });
+}
+
+if (els.favlistSelect) {
+  els.favlistSelect.addEventListener('change', async () => {
+    state.selectedFavlistToken = els.favlistSelect.value || '';
+    await storageSet({
+      [favlistsCacheKey()]: {
+        items: state.favlists,
+        lastToken: state.selectedFavlistToken,
+      },
+    });
+    await loadCacheForActiveTab();
+  });
+}
+
 // ============================
 // Initialization
 // ============================
@@ -2126,6 +3371,9 @@ els.typeSelector.addEventListener('click', (event) => {
   els.cancelButton.disabled = true;
   setExportProgressVisible(false);
   syncDateFilterInputs();
+  syncModeChrome();
+  await refreshOpenPlatformStatus();
   await loadCacheForActiveTab();
   await checkCookie();
+  await maybeFillMySlug();
 })();
