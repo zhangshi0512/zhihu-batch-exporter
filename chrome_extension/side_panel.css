@@ -495,7 +495,9 @@ pre {
 }
 
 .export-options {
-  padding: 6px 10px;
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 8px;

@@ -1,5 +1,7 @@
 'use strict';
 
+const Helpers = globalThis.ZhihuOpenPlatformHelpers;
+
 function escapePinHtml(value) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -307,6 +309,17 @@ const CONTENT_TYPES = {
     profilePath: (slug) => `/people/${slug}/pins`,
     defaultName: '想法',
   },
+  zvideos: {
+    label: '视频',
+    labelEn: 'zvideos',
+    folderName: 'zvideos',
+    frontmatterType: 'zhihu-zvideo',
+    hasTitle: true,
+    supportsTruncated: false,
+    urlFilter: (url) => /zhihu\.com\/zvideo\/\d+/.test(url),
+    initialDataIdFromUrl: (url) => { const m = String(url || '').match(/\/zvideo\/(\d+)/); return m ? m[1] : ''; },
+    defaultName: '视频',
+  },
   collections: {
     label: '收藏夹',
     labelEn: 'collections',
@@ -338,6 +351,8 @@ const els = {
   openPlatformHint: document.getElementById('openPlatformHint'),
   mySlugInput: document.getElementById('mySlugInput'),
   saveMySlugButton: document.getElementById('saveMySlugButton'),
+  officialSortBar: document.getElementById('officialSortBar'),
+  officialSortSelect: document.getElementById('officialSortSelect'),
   favlistPicker: document.getElementById('favlistPicker'),
   favlistSelect: document.getElementById('favlistSelect'),
   refreshFavlistsButton: document.getElementById('refreshFavlistsButton'),
@@ -364,6 +379,7 @@ const els = {
   dateFilterTo: document.getElementById('dateFilterTo'),
   clearDateFilterButton: document.getElementById('clearDateFilterButton'),
   downloadImagesCheckbox: document.getElementById('downloadImagesCheckbox'),
+  preferOfficialDetailCheckbox: document.getElementById('preferOfficialDetailCheckbox'),
 };
 
 // ============================
@@ -419,6 +435,17 @@ function isCollectionsMode() {
   return state.currentType === 'collections';
 }
 
+function isZvideosMode() {
+  return state.currentType === 'zvideos';
+}
+
+function isOfficialMyCreationsMode() {
+  if (isCollectionsMode() || !state.openPlatform.configured) return false;
+  if (isZvideosMode()) return true;
+  if (!state.slug) return true;
+  return Boolean(state.openPlatform.mySlug && state.openPlatform.mySlug === state.slug);
+}
+
 function typeLabel() {
   return currentConfig().label;
 }
@@ -439,6 +466,10 @@ function storageRemove(keys) {
 function cacheKey(slug) {
   if (isCollectionsMode()) {
     return `zhihuFavlist:${state.selectedFavlistToken || 'none'}`;
+  }
+  if (isOfficialMyCreationsMode()) {
+    const owner = slug || state.openPlatform.mySlug;
+    return owner ? `zhihuProfile:${owner}:${state.currentType}` : `zhihuMe:contents:${state.currentType}`;
   }
   return `zhihuProfile:${slug}:${state.currentType}`;
 }
@@ -635,8 +666,7 @@ function normalizeItems(rawItems) {
 }
 
 function itemMergeKey(item) {
-  if (item?.url) return item.url;
-  return `${item?.officialContentType || item?.exportType || 'item'}:${item?.title || ''}`;
+  return Helpers.itemMergeKey(item);
 }
 
 function mergeItems(existingItems, incomingItems) {
@@ -645,8 +675,11 @@ function mergeItems(existingItems, incomingItems) {
   normalizeItems(incomingItems).forEach((item) => {
     const key = itemMergeKey(item);
     const previous = map.get(key) || {};
+    const officialContentType = item.officialContentType || previous.officialContentType || '';
+    const mergedUrl = Helpers.pickPreferredUrl(item.url, previous.url, officialContentType);
+    const exportType = item.exportType || previous.exportType || inferExportType(mergedUrl, officialContentType);
     map.set(key, {
-      url: item.url || previous.url || '',
+      url: mergedUrl,
       title: item.title || previous.title || '',
       snippet: item.snippet || previous.snippet || '',
       contentHtml: item.contentHtml || previous.contentHtml || '',
@@ -658,12 +691,12 @@ function mergeItems(existingItems, incomingItems) {
       favoriteCount: item.favoriteCount ?? previous.favoriteCount ?? null,
       commentCount: item.commentCount ?? previous.commentCount ?? null,
       thanksCount: item.thanksCount ?? previous.thanksCount ?? null,
-      exportType: item.exportType || previous.exportType || '',
-      officialContentType: item.officialContentType || previous.officialContentType || '',
+      exportType,
+      officialContentType,
       favTime: item.favTime || previous.favTime || null,
       favlistTitle: item.favlistTitle || previous.favlistTitle || '',
       favlistUrlToken: item.favlistUrlToken || previous.favlistUrlToken || '',
-      unsupportedReason: item.unsupportedReason || previous.unsupportedReason || '',
+      unsupportedReason: unsupportedReasonFor(mergedUrl, officialContentType, exportType),
     });
   });
   return [...map.values()];
@@ -705,32 +738,24 @@ const OFFICIAL_CONTENT_TYPE = {
   answers: 'answer',
   articles: 'article',
   pins: 'pin',
+  zvideos: 'zvideo',
 };
 
 function stripTrackingParams(url) {
-  try {
-    const parsed = new URL(url);
-    ['utm_medium', 'utm_source', 'utm_campaign', 'utm_term', 'utm_content'].forEach((key) => {
-      parsed.searchParams.delete(key);
-    });
-    parsed.hash = '';
-    return parsed.toString().replace(/[?&]$/, '');
-  } catch {
-    return String(url || '');
-  }
+  return Helpers.stripTrackingParams(url);
 }
 
 function inferExportType(url, officialContentType = '') {
-  const type = String(officialContentType || '').toLowerCase();
-  if (type === 'answer' || /zhihu\.com\/(?:question\/\d+\/answer\/|answer\/)\d+/.test(url)) return 'answers';
-  if (type === 'article' || /zhuanlan\.zhihu\.com\/p\/\d+/.test(url)) return 'articles';
-  if (type === 'pin' || /zhihu\.com\/pin\/\d+/.test(url)) return 'pins';
-  return '';
+  return Helpers.extractZhihuContentIdentity(url, officialContentType).exportType;
 }
 
 function unsupportedReasonFor(url, officialContentType, exportType) {
   const type = String(officialContentType || '').toLowerCase();
-  if (type === 'zvideo') return '视频暂不支持全文导出';
+  if (type === 'zvideo') {
+    return isZvideosMode() && state.openPlatform.configured
+      ? ''
+      : '视频仅支持在“视频(我的创作)”中通过官方全文 API 导出关联正文';
+  }
   if (type === 'question') return '问题页暂不支持全文导出';
   if (exportType) return '';
   return url ? '暂不支持该类型的全文导出' : '缺少内容链接';
@@ -846,31 +871,11 @@ function collectionIdsToTry(folder, token) {
 }
 
 function readPaging(data) {
-  const paging = data?.Paging || data?.paging || {};
-  const totals = Number(paging.Totals ?? paging.totals);
-  return {
-    isEnd: paging.IsEnd ?? paging.is_end ?? paging.isEnd,
-    nextOffset: paging.NextOffset ?? paging.next_offset ?? paging.nextOffset,
-    totals: Number.isFinite(totals) ? totals : null,
-    items: data?.Items || data?.items || [],
-  };
+  return Helpers.readOfficialPaging(data);
 }
 
-function nextPageOffset(paging, currentOffset, pageSize, fetchedThisPage, collectedCount) {
-  if (fetchedThisPage <= 0) return null;
-
-  const current = String(currentOffset);
-  const rawNext = paging.nextOffset;
-  const hasDistinctNext = rawNext != null && String(rawNext) !== '' && String(rawNext) !== current;
-  const hasMoreTotals = paging.totals != null && collectedCount < paging.totals;
-
-  if (paging.isEnd === true && !hasMoreTotals) return null;
-  if (hasDistinctNext) return String(rawNext);
-  if (paging.isEnd === false || hasMoreTotals || fetchedThisPage >= pageSize) {
-    const numeric = Number(currentOffset);
-    if (Number.isFinite(numeric)) return String(numeric + pageSize);
-  }
-  return null;
+function nextPageOffset(paging, currentOffset, seenOffsets = null) {
+  return Helpers.nextOfficialPageOffset(paging, currentOffset, seenOffsets);
 }
 
 async function sendRuntimeMessage(message) {
@@ -914,15 +919,34 @@ async function refreshOpenPlatformStatus() {
   }
 }
 
-async function openPlatformRequest(path, query, method = 'GET') {
-  const result = await sendRuntimeMessage({ type: 'openPlatformRequest', method, path, query });
-  if (!result?.ok) throw new Error(result?.error || '开放平台请求失败');
+async function openPlatformRequestRaw(path, query, method = 'GET', options = {}) {
+  const result = await sendRuntimeMessage({
+    type: 'openPlatformRequest',
+    method,
+    path,
+    query,
+    body: options.body,
+    preserveLargeInts: Boolean(options.preserveLargeInts),
+  });
+  return result || { ok: false, code: 'NO_RESPONSE', error: '开放平台无响应' };
+}
+
+async function openPlatformRequest(path, query, method = 'GET', options = {}) {
+  const result = await openPlatformRequestRaw(path, query, method, options);
+  if (!result?.ok) {
+    const err = new Error(result?.error || '开放平台请求失败');
+    err.code = result?.code;
+    throw err;
+  }
   return result.data || {};
 }
 
 function shouldUseOfficialContents() {
+  if (isZvideosMode()) return Boolean(state.openPlatform.configured);
   const mySlug = state.openPlatform.mySlug;
-  return Boolean(state.openPlatform.configured && mySlug && state.slug && mySlug === state.slug);
+  if (!state.openPlatform.configured) return false;
+  if (!state.slug) return true;
+  return Boolean(mySlug && mySlug === state.slug);
 }
 
 async function detectMySlugFromPage() {
@@ -963,6 +987,7 @@ async function maybeFillMySlug() {
 
 function syncModeChrome() {
   if (els.favlistPicker) els.favlistPicker.hidden = !isCollectionsMode();
+  if (els.officialSortBar) els.officialSortBar.hidden = !shouldUseOfficialContents();
   if (els.collectButton) {
     els.collectButton.textContent = isCollectionsMode() ? '加载收藏夹内容' : '采集 / 刷新链接';
   }
@@ -994,15 +1019,15 @@ async function persistCurrentItems() {
 }
 
 async function applyCollectedItems(collectedItems, remoteTotal, options = {}) {
-  const previousUrls = new Set(state.urls);
+  const previousKeys = new Set(state.items.map(itemMergeKey));
   const collected = normalizeItems(collectedItems);
-  const collectedUrls = new Set(itemUrls(collected));
+  const collectedKeys = new Set(collected.map(itemMergeKey));
   const existingItems = options.authoritative
-    ? state.items.filter((item) => collectedUrls.has(item.url))
+    ? state.items.filter((item) => collectedKeys.has(itemMergeKey(item)))
     : state.items;
   const merged = mergeItems(existingItems, collected);
-  const added = merged.filter((item) => !previousUrls.has(item.url)).length;
-  const removed = options.authoritative ? Math.max(0, previousUrls.size + added - merged.length) : 0;
+  const added = merged.filter((item) => !previousKeys.has(itemMergeKey(item))).length;
+  const removed = options.authoritative ? Math.max(0, previousKeys.size + added - merged.length) : 0;
 
   state.items = merged;
   state.urls = itemUrls(state.items);
@@ -1024,6 +1049,12 @@ function emptyListMessage() {
     if (!state.openPlatform.configured) return '请先在上方配置 Access Secret，再加载收藏夹。';
     if (!state.selectedFavlistToken) return '先刷新收藏夹列表并选中一个收藏夹，再加载内容。';
     return '这个收藏夹还没有缓存内容。点击“加载收藏夹内容”。';
+  }
+  if (isZvideosMode() && !state.openPlatform.configured) {
+    return '视频（我的创作）需要配置 Access Secret 后采集，并通过官方全文 API 导出关联正文。';
+  }
+  if (shouldUseOfficialContents() && !state.slug) {
+    return `还没有缓存的我的${typeLabel()}。点击“采集 / 刷新链接”直接从开放平台拉取。`;
   }
   return `当前主页还没有缓存的${typeLabel()}链接。`;
 }
@@ -1078,8 +1109,10 @@ async function loadCacheForActiveTab() {
     return;
   }
 
-  if (!state.slug) {
-    els.activeTabText.textContent = '请打开知乎 /people/... 个人主页标签页。';
+  if (!state.slug && !shouldUseOfficialContents()) {
+    els.activeTabText.textContent = isZvideosMode()
+      ? '视频需要配置开放平台 Access Secret'
+      : '请打开知乎 /people/... 个人主页标签页（或配置 Access Secret 拉取本人创作）。';
     state.items = [];
     state.urls = [];
     state.remoteTotal = null;
@@ -1088,16 +1121,23 @@ async function loadCacheForActiveTab() {
     return;
   }
 
-  els.activeTabText.textContent = shouldUseOfficialContents()
-    ? `${state.slug}（官方目录）`
-    : state.slug;
+  if (isZvideosMode()) {
+    els.activeTabText.textContent = `${state.openPlatform.mySlug || '当前账号'}（我的视频·官方）`;
+  } else if (shouldUseOfficialContents()) {
+    els.activeTabText.textContent = `${state.slug || state.openPlatform.mySlug || '当前账号'}（官方目录）`;
+  } else {
+    els.activeTabText.textContent = state.slug;
+  }
   const result = await storageGet([cacheKey(state.slug)]);
   const cached = result[cacheKey(state.slug)] || {};
   state.items = loadCachedItems(cached);
   state.urls = itemUrls(state.items);
   state.lastCollectedAt = cached.lastCollectedAt || '';
   state.remoteTotal = Number.isFinite(cached.remoteTotal) ? cached.remoteTotal : null;
-  state.selected = new Set(state.urls);
+  state.selected = new Set(state.urls.filter((url) => {
+    const item = state.items.find((entry) => entry.url === url);
+    return !item?.unsupportedReason;
+  }));
   renderUrls();
 }
 
@@ -1945,12 +1985,16 @@ async function collectOfficialContents() {
   const contentType = OFFICIAL_CONTENT_TYPE[state.currentType];
   if (!contentType) throw new Error('当前类型不支持官方目录。');
 
+  const sortValue = els.officialSortSelect?.value || 'ts:desc';
+  const [sortField, sortOrder] = sortValue.split(':');
   const pageSize = 50;
   let offset = '0';
   const items = [];
-  const seen = new Set();
+  const seenKeys = new Set();
+  const seenOffsets = new Set([offset]);
   let remoteTotal = null;
   let page = 0;
+  let pagingWarning = '';
 
   while (page < 500) {
     page += 1;
@@ -1958,18 +2002,17 @@ async function collectOfficialContents() {
       ContentType: contentType,
       Limit: pageSize,
       Offset: offset,
-      SortField: 'ts',
-      SortOrder: 'desc',
+      SortField: sortField || 'ts',
+      SortOrder: sortOrder || 'desc',
     });
     const paging = readPaging(data);
-    let fetchedThisPage = 0;
     paging.items.forEach((item) => {
       const local = officialItemToLocal(item);
       if (!local.url) return;
-      if (seen.has(local.url)) return;
-      seen.add(local.url);
+      const key = itemMergeKey(local);
+      if (seenKeys.has(key)) return;
+      seenKeys.add(key);
       items.push(local);
-      fetchedThisPage += 1;
     });
     remoteTotal = paging.totals ?? remoteTotal;
     setProgress(
@@ -1978,14 +2021,20 @@ async function collectOfficialContents() {
       remoteTotal ? (items.length / remoteTotal) * 100 : Math.min(95, page * 10),
       remoteTotal ? `${items.length} / ${remoteTotal} 条` : `已获取 ${items.length} 条`
     );
-    const nextOffset = nextPageOffset(paging, offset, pageSize, fetchedThisPage, items.length);
-    if (nextOffset == null) break;
-    offset = nextOffset;
+    const step = nextPageOffset(paging, offset, seenOffsets);
+    if (step.error) {
+      pagingWarning = step.error;
+      break;
+    }
+    if (step.done || step.nextOffset == null) break;
+    offset = step.nextOffset;
+    seenOffsets.add(offset);
   }
 
   const { added, removed } = await applyCollectedItems(items, remoteTotal, { authoritative: true });
   const totalHint = remoteTotal && remoteTotal > state.urls.length ? `，接口总数 ${remoteTotal}` : '';
-  els.lastCollectedText.textContent = `官方目录新增 ${added} 条${removed ? `，清理 ${removed} 条旧缓存` : ''}${totalHint}，${formatTime(state.lastCollectedAt)}`;
+  const warnHint = pagingWarning ? `（${pagingWarning}）` : '';
+  els.lastCollectedText.textContent = `官方目录新增 ${added} 条${removed ? `，清理 ${removed} 条旧缓存` : ''}${totalHint}${warnHint}，${formatTime(state.lastCollectedAt)}`;
   setProgress(els.collectProgressFill, els.collectProgressText, 100, `已缓存 ${state.urls.length} 条`);
 }
 
@@ -2063,6 +2112,7 @@ async function collectOfficialFavlistContents(folder, extra) {
   let offset = '0';
   const items = [];
   const seen = new Set();
+  const seenOffsets = new Set([offset]);
   let remoteTotal = null;
   let page = 0;
 
@@ -2090,17 +2140,19 @@ async function collectOfficialFavlistContents(folder, extra) {
         local.url = `zhihu:unresolved/${state.selectedFavlistToken}/${offset}-${index}`;
         local.unsupportedReason = local.unsupportedReason || '缺少内容链接';
       }
-      if (seen.has(local.url)) return;
-      seen.add(local.url);
+      const key = itemMergeKey(local);
+      if (seen.has(key)) return;
+      seen.add(key);
       items.push(local);
       fetchedThisPage += 1;
     });
     remoteTotal = paging.totals ?? remoteTotal;
-    const nextOffset = nextPageOffset(paging, offset, pageSize, fetchedThisPage, items.length);
+    const step = nextPageOffset(paging, offset, seenOffsets);
     favlistLog('official-page', {
       page,
       offset,
-      nextOffset,
+      nextOffset: step.nextOffset,
+      pagingError: step.error || '',
       batchSize: paging.items.length,
       added: fetchedThisPage,
       uniqueTotal: items.length,
@@ -2121,8 +2173,13 @@ async function collectOfficialFavlistContents(folder, extra) {
       remoteTotal ? (items.length / remoteTotal) * 100 : Math.min(95, page * 10),
       remoteTotal ? `${items.length} / ${remoteTotal} 条` : `已获取 ${items.length} 条`
     );
-    if (nextOffset == null) break;
-    offset = nextOffset;
+    if (step.error) {
+      favlistLog('official-paging-anomaly', { error: step.error });
+      break;
+    }
+    if (step.done || step.nextOffset == null) break;
+    offset = step.nextOffset;
+    seenOffsets.add(offset);
   }
 
   favlistLog('official-done', {
@@ -2325,7 +2382,11 @@ async function collectUrls() {
     return;
   }
 
-  if (!state.tab?.id || !state.slug) return;
+  if (isZvideosMode() && !state.openPlatform.configured) {
+    els.lastCollectedText.textContent = '视频（我的创作）需要配置 Access Secret。';
+    setProgress(els.collectProgressFill, els.collectProgressText, 0, '未配置开放平台');
+    return;
+  }
 
   if (shouldUseOfficialContents()) {
     els.collectButton.disabled = true;
@@ -2351,9 +2412,18 @@ async function collectUrls() {
       syncModeChrome();
       return;
     } catch (error) {
+      if (isZvideosMode() || !state.tab?.id || !state.slug || !isExpectedProfilePage(state.tab.url || '', state.currentType)) {
+        els.lastCollectedText.textContent = `官方目录失败：${error.message}`;
+        setProgress(els.collectProgressFill, els.collectProgressText, 0, '采集失败');
+        els.collectButton.disabled = false;
+        syncModeChrome();
+        return;
+      }
       els.lastCollectedText.textContent = `官方目录失败，改用页面采集：${error.message}`;
     }
   }
+
+  if (!state.tab?.id || !state.slug) return;
 
   if (!isExpectedProfilePage(state.tab.url || '', state.currentType)) {
     const expectedSection = { answers: 'answers', articles: 'posts', pins: 'pins' }[state.currentType];
@@ -2615,7 +2685,7 @@ function extractContent(url, pageHtml, type = state.currentType) {
   return {
     ...ids,
     url,
-    type: state.currentType,
+    type,
     title: finalTitle,
     author: chosen.author || '知乎用户',
     html: chosen.html,
@@ -2761,8 +2831,8 @@ function buildMarkdown(data, type = state.currentType) {
   return lines.join('\n');
 }
 
-function sanitizeFilenamePart(value) {
-  const defaultName = currentConfig().defaultName;
+function sanitizeFilenamePart(value, type = state.currentType) {
+  const defaultName = configFor(type).defaultName;
   return cleanText(value || '', 80)
     // Windows forbids ASCII "?" in filenames. Preserve the punctuation by
     // replacing it with the visually equivalent full-width character.
@@ -2773,7 +2843,7 @@ function sanitizeFilenamePart(value) {
 }
 
 function buildFilename(data, type = state.currentType) {
-  return `${sanitizeFilenamePart(data.title)}-${data.id}.md`;
+  return `${sanitizeFilenamePart(data.title, type)}-${data.id}.md`;
 }
 
 // ============================
@@ -2943,18 +3013,82 @@ async function processItemMarkdownAndImages(content, config, files, downloadImag
   files.push({ name: `${config.folderName}/${buildFilename(content, type)}`, data: markdown });
 }
 
+function isFatalOpenPlatformCode(code) {
+  return [20001, 30001, 30002, 30003].includes(Number(code));
+}
+
+async function fetchOfficialContentDetail(item, exportType) {
+  const result = await openPlatformRequestRaw('/api/v1/user/content_detail', {
+    ContentUrl: item.url,
+  });
+  if (!result.ok) {
+    const err = new Error(result.error || '开放平台全文接口请求失败');
+    err.code = result.code;
+    err.fatal = isFatalOpenPlatformCode(result.code);
+    throw err;
+  }
+  const normalized = Helpers.normalizeContentDetailResponse(result.data, item.url, {
+    ...item,
+    exportType,
+    author: item.author || state.openPlatform.mySlug || '知乎用户',
+  });
+  if (!normalized) {
+    const err = new Error('开放平台返回内容不可用（Body 为空）');
+    err.code = 10001;
+    err.fatal = false;
+    throw err;
+  }
+  return normalized;
+}
+
+function buildContentFromCachedPin(item, pinId) {
+  return {
+    id: pinId,
+    url: item.url,
+    title: item.title || `想法${pinId}`,
+    author: item.author || '知乎用户',
+    html: item.contentHtml || `<p>${escapeHtml(item.snippet)}</p>`,
+    createdTime: item.createdTime || null,
+    updatedTime: item.updatedTime || null,
+    voteCount: item.voteCount ?? null,
+    likeCount: item.likeCount ?? null,
+    favoriteCount: item.favoriteCount ?? null,
+    commentCount: item.commentCount ?? null,
+    thanksCount: item.thanksCount ?? null,
+    favTime: item.favTime || null,
+    favlistTitle: item.favlistTitle || '',
+  };
+}
+
+async function fetchWebpageContent(item, exportType, config, signal) {
+  const response = await fetch(item.url, { credentials: 'include', signal });
+  if (!response.ok) throw new Error(`请求失败：HTTP ${response.status}`);
+  const html = await response.text();
+  const content = extractContent(item.url, html, exportType);
+  if (!content) throw new Error(`无法提取${config.label}内容。`);
+  for (const field of ['createdTime', 'updatedTime', 'voteCount', 'likeCount', 'favoriteCount', 'commentCount', 'thanksCount']) {
+    content[field] = content[field] ?? item[field] ?? null;
+  }
+  content.favTime = item.favTime || null;
+  content.favlistTitle = item.favlistTitle || '';
+  return content;
+}
+
 // ============================
 // Export ZIP
 // ============================
 async function exportSelectedZip() {
+  const items = selectedItems();
+  if (items.length === 0) return;
+
+  const preferOfficialDetail = Boolean(els.preferOfficialDetailCheckbox?.checked && state.openPlatform.configured);
+  const isMyContext = isOfficialMyCreationsMode();
+  const allVideos = items.every((item) => (item.exportType || inferExportType(item.url, item.officialContentType)) === 'zvideos');
   const cookie = await checkCookie();
-  if (!cookie) {
+  if (!cookie && !(state.openPlatform.configured && isMyContext && (preferOfficialDetail || allVideos))) {
     els.jobStatus.textContent = '无法获取知乎登录凭证';
     return;
   }
-
-  const items = selectedItems();
-  if (items.length === 0) return;
 
   state.exportAbortController = new AbortController();
   els.exportButton.disabled = true;
@@ -2968,9 +3102,18 @@ async function exportSelectedZip() {
   const files = [];
   const failures = [];
   const downloadImages = els.downloadImagesCheckbox ? els.downloadImagesCheckbox.checked : true;
+  const ownerLabel = state.slug || state.openPlatform.mySlug || 'export';
   const zipLabel = isCollectionsMode()
     ? `collections_${state.selectedFavlistToken || 'export'}`
-    : `${currentConfig().labelEn}_${state.slug || 'export'}`;
+    : `${currentConfig().labelEn}_${ownerLabel}`;
+
+  let officialDetailHalted = false;
+  let officialDetailCalls = 0;
+
+  if (state.openPlatform.configured && isMyContext && (preferOfficialDetail || allVideos)) {
+    const est = Helpers.estimateCreationQuota({ itemCount: items.length, useContentDetail: true });
+    appendLog(`提示：本次预计最多消耗约 ${est} 次开放平台“创作能力”额度。`);
+  }
 
   try {
     for (let index = 0; index < items.length; index++) {
@@ -2985,58 +3128,81 @@ async function exportSelectedZip() {
         const error = item.unsupportedReason || '暂不支持该类型的全文导出';
         failures.push({ url: item.url, error });
         appendLog(`跳过 ${item.url}：${error}`);
-      } else if (exportType === 'pins' && (item.contentHtml || item.snippet)) {
-        appendLog(`使用缓存内容：${item.url}`);
+      } else {
         try {
-          const pinId = item.url.match(/\/pin\/(\d+)/)?.[1] || item.title.replace(/^想法/, '') || '';
-          const content = {
-            id: pinId,
-            url: item.url,
-            title: item.title || `想法${pinId}`,
-            author: item.author || '知乎用户',
-            html: item.contentHtml || `<p>${escapeHtml(item.snippet)}</p>`,
-            createdTime: item.createdTime || null,
-            updatedTime: item.updatedTime || null,
-            voteCount: item.voteCount ?? null,
-            likeCount: item.likeCount ?? null,
-            favoriteCount: item.favoriteCount ?? null,
-            commentCount: item.commentCount ?? null,
-            thanksCount: item.thanksCount ?? null,
-            favTime: item.favTime || null,
-            favlistTitle: item.favlistTitle || '',
-          };
+          let content = null;
+
+          if (exportType === 'zvideos') {
+            if (!state.openPlatform.configured || officialDetailHalted) {
+              throw new Error(officialDetailHalted ? '开放平台额度/风控受限，已停止后续请求' : '视频正文需要配置 Access Secret');
+            }
+            appendLog(`正在调用官方全文 API 获取视频正文：${item.url}`);
+            officialDetailCalls += 1;
+            content = await fetchOfficialContentDetail(item, exportType);
+          } else if (exportType === 'pins') {
+            const pinId = item.url.match(/\/pin\/(\d+)/)?.[1] || item.title.replace(/^想法/, '') || '';
+            if (item.contentHtml && !preferOfficialDetail) {
+              appendLog(`使用缓存内容：${item.url}`);
+              content = buildContentFromCachedPin(item, pinId);
+            } else if (isMyContext && state.openPlatform.configured && !officialDetailHalted) {
+              try {
+                appendLog(`正在通过官方全文 API 补全想法正文：${item.url}`);
+                officialDetailCalls += 1;
+                content = await fetchOfficialContentDetail(item, exportType);
+              } catch (officialErr) {
+                if (officialErr.fatal) officialDetailHalted = true;
+                if (item.contentHtml || item.snippet) {
+                  appendLog(`  └─ 官方全文回退缓存摘要：${officialErr.message}`);
+                  content = buildContentFromCachedPin(item, pinId);
+                } else {
+                  throw officialErr;
+                }
+              }
+            } else if (item.contentHtml || item.snippet) {
+              appendLog(`使用缓存内容：${item.url}`);
+              content = buildContentFromCachedPin(item, pinId);
+            } else {
+              appendLog(`正在获取 ${item.url}`);
+              content = await fetchWebpageContent(item, exportType, config, state.exportAbortController.signal);
+            }
+          } else if (preferOfficialDetail && isMyContext && state.openPlatform.configured && !officialDetailHalted) {
+            try {
+              appendLog(`正在调用官方全文 API：${item.url}`);
+              officialDetailCalls += 1;
+              content = await fetchOfficialContentDetail(item, exportType);
+            } catch (officialErr) {
+              if (officialErr.fatal) officialDetailHalted = true;
+              if (cookie) {
+                appendLog(`  └─ 官方全文失败（${officialErr.message}），回退网页抓取...`);
+                content = await fetchWebpageContent(item, exportType, config, state.exportAbortController.signal);
+              } else {
+                throw officialErr;
+              }
+            }
+          } else {
+            appendLog(`正在获取 ${item.url}`);
+            try {
+              content = await fetchWebpageContent(item, exportType, config, state.exportAbortController.signal);
+            } catch (webErr) {
+              if (isMyContext && state.openPlatform.configured && !officialDetailHalted) {
+                appendLog(`  └─ 网页抓取失败（${webErr.message}），自动回退官方全文 API...`);
+                try {
+                  officialDetailCalls += 1;
+                  content = await fetchOfficialContentDetail(item, exportType);
+                } catch (officialErr) {
+                  if (officialErr.fatal) officialDetailHalted = true;
+                  throw new Error(`${webErr.message}；官方回退失败：${officialErr.message}`);
+                }
+              } else {
+                throw webErr;
+              }
+            }
+          }
+
           await processItemMarkdownAndImages(content, config, files, downloadImages, state.exportAbortController.signal, appendLog, exportType);
           appendLog(`已加入：${content.title}`);
         } catch (error) {
-          failures.push({ url: item.url, error: error.message });
-          appendLog(`失败 ${item.url}：${error.message}`);
-        }
-      } else {
-        appendLog(`正在获取 ${item.url}`);
-        try {
-          const response = await fetch(item.url, {
-            credentials: 'include',
-            signal: state.exportAbortController.signal,
-          });
-          if (!response.ok) throw new Error(`请求失败：HTTP ${response.status}`);
-          const html = await response.text();
-          const content = extractContent(item.url, html, exportType);
-          if (content) {
-            for (const field of ['createdTime', 'updatedTime', 'voteCount', 'likeCount', 'favoriteCount', 'commentCount', 'thanksCount']) {
-              content[field] = content[field] ?? item[field] ?? null;
-            }
-            content.favTime = item.favTime || null;
-            content.favlistTitle = item.favlistTitle || '';
-          }
-          if (!content) throw new Error(`无法提取${config.label}内容。`);
-          if (isCollectionsMode() || exportType === 'pins') {
-            await processItemMarkdownAndImages(content, config, files, downloadImages, state.exportAbortController.signal, appendLog, exportType);
-          } else {
-            const markdown = buildMarkdown(content, exportType);
-            files.push({ name: `${config.folderName}/${buildFilename(content, exportType)}`, data: markdown });
-          }
-          appendLog(`已加入：${content.title}`);
-        } catch (error) {
+          if (error?.fatal) officialDetailHalted = true;
           failures.push({ url: item.url, error: error.message });
           appendLog(`失败 ${item.url}：${error.message}`);
         }
@@ -3056,7 +3222,7 @@ async function exportSelectedZip() {
     }
     if (files.length === 0) throw new Error('没有生成任何 Markdown 文件。');
 
-    appendLog('正在打包 ZIP...');
+    appendLog(`正在打包 ZIP...${officialDetailCalls ? `（本次共调用官方全文 API ${officialDetailCalls} 次）` : ''}`);
     const zipBlob = createZipBlob(files);
     const datePart = new Date().toISOString().slice(0, 10);
     const filename = `zhihu_${zipLabel}_${datePart}.zip`;
@@ -3176,7 +3342,7 @@ chrome.runtime.onMessage.addListener((message) => {
 // Clear cache
 // ============================
 async function clearCurrentCache() {
-  if (!isCollectionsMode() && !state.slug) return;
+  if (!isCollectionsMode() && !state.slug && !shouldUseOfficialContents()) return;
   await storageRemove([cacheKey(state.slug)]);
   state.items = [];
   state.urls = [];
@@ -3266,6 +3432,7 @@ if (els.saveSecretButton) {
     els.accessSecretInput.value = '';
     await refreshOpenPlatformStatus();
     await maybeFillMySlug();
+    await loadCacheForActiveTab();
     els.openPlatformHint.textContent = '已保存。建议点一次探测连接确认可用。';
   });
 }
@@ -3278,6 +3445,7 @@ if (els.clearSecretButton) {
       els.accessSecretInput.placeholder = '粘贴个人中心的 Access Secret';
     }
     await refreshOpenPlatformStatus();
+    await loadCacheForActiveTab();
   });
 }
 
@@ -3296,6 +3464,7 @@ if (els.probeSecretButton) {
         }
         els.accessSecretInput.value = '';
         await refreshOpenPlatformStatus();
+        await loadCacheForActiveTab();
       }
       const result = await sendRuntimeMessage({ type: 'probeAccessSecret' });
       if (!result?.ok) {

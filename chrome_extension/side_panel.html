@@ -74,7 +74,17 @@
         <button class="type-btn active" data-type="answers">回答</button>
         <button class="type-btn" data-type="articles">文章</button>
         <button class="type-btn" data-type="pins">想法</button>
+        <button class="type-btn" data-type="zvideos">视频</button>
         <button class="type-btn" data-type="collections">收藏夹</button>
+      </section>
+
+      <section class="favlist-picker" id="officialSortBar" hidden>
+        <span class="label">官方目录排序</span>
+        <select id="officialSortSelect" aria-label="官方目录排序">
+          <option value="ts:desc">最新发布</option>
+          <option value="ts:asc">最早发布</option>
+          <option value="like_count:desc">最高赞优先</option>
+        </select>
       </section>
 
       <section class="favlist-picker" id="favlistPicker" hidden>
@@ -132,6 +142,10 @@
           <input type="checkbox" id="downloadImagesCheckbox" checked>
           <span>本地化图片到 ZIP (<code style="font-size: 11px;">images/</code>)</span>
         </label>
+        <label class="checkbox-option">
+          <input type="checkbox" id="preferOfficialDetailCheckbox">
+          <span>本人内容优先用官方全文 API（免登录，消耗每日额度）</span>
+        </label>
       </section>
 
       <footer class="footer">
@@ -147,6 +161,7 @@
         <pre id="jobLog"></pre>
       </section>
     </main>
+    <script src="open_platform_helpers.js"></script>
     <script src="side_panel.js"></script>
   </body>
 </html>

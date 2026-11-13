@@ -1,14 +1,17 @@
 'use strict';
 
+importScripts('open_platform_helpers.js');
+
 const OPEN_PLATFORM_ORIGIN = 'https://developer.zhihu.com';
 const STORAGE_SECRET = 'zhihuAccessSecret';
 const STORAGE_MY_SLUG = 'zhihuMySlug';
 
 const OPEN_PLATFORM_ERROR_TEXT = {
-  10001: '参数错误',
-  20001: '鉴权失败，请检查 Access Secret 或系统时间',
-  30001: '请求过于频繁，请稍后再试',
+  10001: '参数错误或内容不可用',
+  20001: '鉴权或授权失败，请检查 Access Secret 或系统时间',
+  30001: '调用频率、并发或当日额度超限，请稍后再试',
   30002: '开放平台额度已用尽',
+  30003: '请求被风控拒绝',
   40004: '知识库不存在',
   40005: '相同文件正在处理中',
   40006: '文件解析失败',
@@ -115,7 +118,7 @@ function summarizeBody(text) {
   return String(text || '').replace(/\s+/g, ' ').trim().slice(0, 180);
 }
 
-async function openPlatformRequest({ method = 'GET', path, query, body, secret: rawSecret } = {}) {
+async function openPlatformRequest({ method = 'GET', path, query, body, secret: rawSecret, preserveLargeInts = false } = {}) {
   const secret = normalizeSecret(rawSecret) || await getAccessSecret().then(normalizeSecret);
   if (!secret) {
     return { ok: false, code: 'NO_SECRET', error: '未配置 Access Secret。请先保存，或在输入框里粘贴后再探测。' };
@@ -154,7 +157,7 @@ async function openPlatformRequest({ method = 'GET', path, query, body, secret: 
   let payload = null;
   if (rawText) {
     try {
-      payload = JSON.parse(rawText);
+      payload = ZhihuOpenPlatformHelpers.parseJsonSafe(rawText, { preserveLargeInts });
     } catch {
       payload = null;
     }
