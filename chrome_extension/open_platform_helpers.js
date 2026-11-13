@@ -610,6 +610,73 @@
     };
   }
 
+  function sanitizeHttpUrl(rawUrl) {
+    const raw = String(rawUrl || '').trim();
+    if (!raw) return '';
+    try {
+      const parsed = new URL(raw.startsWith('//') ? `https:${raw}` : raw);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '';
+      return parsed.toString();
+    } catch {
+      return '';
+    }
+  }
+
+  function normalizeFolloweeItem(raw) {
+    const r = raw && typeof raw === 'object' ? raw : {};
+    const urlToken = String(r.UrlToken ?? r.urlToken ?? '').trim();
+    const fallbackUrl = urlToken ? `https://www.zhihu.com/people/${encodeURIComponent(urlToken)}` : '';
+    const profileUrl = sanitizeHttpUrl(r.Url ?? r.url) || fallbackUrl;
+    const rawGender = r.Gender ?? r.gender;
+    const rawFollowerCount = r.FollowerCount ?? r.followerCount;
+    return {
+      fullname: String(r.Fullname ?? r.fullname ?? r.Name ?? (urlToken || '未知用户')),
+      urlToken,
+      url: profileUrl,
+      avatarUrl: sanitizeHttpUrl(r.AvatarUrl ?? r.avatarUrl),
+      headline: String(r.Headline ?? r.headline ?? ''),
+      gender: rawGender != null ? Number(rawGender) : null,
+      followerCount: rawFollowerCount != null ? Number(rawFollowerCount) : null,
+    };
+  }
+
+  function formatFolloweesExport(followees) {
+    const list = (Array.isArray(followees) ? followees : []).map(normalizeFolloweeItem);
+    const csvHeader = ['Fullname', 'UrlToken', 'Url', 'Headline', 'Gender', 'FollowerCount', 'AvatarUrl'];
+    const csvLines = [csvHeader.join(',')];
+    list.forEach((u) => {
+      csvLines.push([
+        u.fullname,
+        u.urlToken,
+        u.url,
+        u.headline,
+        u.gender == null ? '' : u.gender,
+        u.followerCount == null ? '' : u.followerCount,
+        u.avatarUrl,
+      ].map(csvEscape).join(','));
+    });
+
+    const mdLines = [
+      `# 知乎关注创作者列表（共 ${list.length} 人）`,
+      '',
+      `> 导出时间：${new Date().toISOString().slice(0, 10)}`,
+      '',
+      '| 昵称 | UrlToken | 粉丝数 | 一句话介绍 | 主页 |',
+      '| :--- | :--- | :--- | :--- | :--- |',
+      ...list.map((u) => {
+        const cleanCell = (v) => String(v || '').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ').trim();
+        const link = u.url ? `[主页](${u.url})` : '—';
+        return `| ${cleanCell(u.fullname)} | \`${cleanCell(u.urlToken)}\` | ${formatStatValue(u.followerCount)} | ${cleanCell(u.headline) || '—'} | ${link} |`;
+      }),
+      '',
+    ];
+
+    return {
+      markdown: mdLines.join('\n'),
+      csv: csvLines.join('\n'),
+    };
+  }
+
   return {
     quoteLargeJsonIntegers,
     parseJsonSafe,
@@ -631,5 +698,8 @@
     formatContentStatsFrontmatterLines,
     buildContentStatsCsv,
     buildAccountStatsReport,
+    sanitizeHttpUrl,
+    normalizeFolloweeItem,
+    formatFolloweesExport,
   };
 });

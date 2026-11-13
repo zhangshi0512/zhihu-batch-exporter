@@ -340,6 +340,16 @@ const CONTENT_TYPES = {
     urlFilter: () => false,
     defaultName: '创作数据',
   },
+  followees: {
+    label: '我的关注',
+    labelEn: 'followees',
+    folderName: 'followees',
+    frontmatterType: 'zhihu-followees',
+    hasTitle: true,
+    supportsTruncated: false,
+    urlFilter: () => false,
+    defaultName: '我的关注',
+  },
 };
 
 const RECENT_COLLECTIONS_TOKEN = '__recent_collections__';
@@ -418,6 +428,14 @@ const els = {
   fillCurrentTabUrlButton: document.getElementById('fillCurrentTabUrlButton'),
   loadSingleStatsButton: document.getElementById('loadSingleStatsButton'),
   singleStatsResult: document.getElementById('singleStatsResult'),
+  followeesView: document.getElementById('followeesView'),
+  followeesCountText: document.getElementById('followeesCountText'),
+  loadFolloweesButton: document.getElementById('loadFolloweesButton'),
+  loadMoreFolloweesButton: document.getElementById('loadMoreFolloweesButton'),
+  loadAllFolloweesButton: document.getElementById('loadAllFolloweesButton'),
+  exportFolloweesButton: document.getElementById('exportFolloweesButton'),
+  followeesSearchInput: document.getElementById('followeesSearchInput'),
+  followeesList: document.getElementById('followeesList'),
 };
 
 // ============================
@@ -442,6 +460,11 @@ const state = {
   selectedFavlistToken: '',
   accountStats: null,
   accountStatsQuery: null,
+  followees: [],
+  followeesNextOffset: '0',
+  followeesSeenOffsets: [],
+  followeesIsEnd: true,
+  followeesTotals: null,
 };
 
 function favlistLog(event, details) {
@@ -484,8 +507,12 @@ function isStatsMode() {
   return state.currentType === 'stats';
 }
 
+function isFolloweesMode() {
+  return state.currentType === 'followees';
+}
+
 function isOfficialMyCreationsMode() {
-  if (isCollectionsMode() || isStatsMode() || !state.openPlatform.configured) return false;
+  if (isCollectionsMode() || isStatsMode() || isFolloweesMode() || !state.openPlatform.configured) return false;
   if (isZvideosMode()) return true;
   if (!state.slug) return true;
   return Boolean(state.openPlatform.mySlug && state.openPlatform.mySlug === state.slug);
@@ -1034,16 +1061,19 @@ async function maybeFillMySlug() {
 
 function syncModeChrome() {
   const statsMode = isStatsMode();
+  const followeesMode = isFolloweesMode();
+  const specialMode = statsMode || followeesMode;
   const collectionsMode = isCollectionsMode();
-  if (els.favlistPicker) els.favlistPicker.hidden = !collectionsMode || statsMode;
-  if (els.officialSortBar) els.officialSortBar.hidden = statsMode || !shouldUseOfficialContents();
-  if (els.collectControlsSection) els.collectControlsSection.hidden = statsMode;
-  if (els.timeFilterSection) els.timeFilterSection.hidden = statsMode;
-  if (els.selectionBarSection) els.selectionBarSection.hidden = statsMode;
-  if (els.urlList) els.urlList.hidden = statsMode;
-  if (els.exportOptionsSection) els.exportOptionsSection.hidden = statsMode;
-  if (els.exportFooterSection) els.exportFooterSection.hidden = statsMode;
+  if (els.favlistPicker) els.favlistPicker.hidden = !collectionsMode || specialMode;
+  if (els.officialSortBar) els.officialSortBar.hidden = specialMode || !shouldUseOfficialContents();
+  if (els.collectControlsSection) els.collectControlsSection.hidden = specialMode;
+  if (els.timeFilterSection) els.timeFilterSection.hidden = specialMode;
+  if (els.selectionBarSection) els.selectionBarSection.hidden = specialMode;
+  if (els.urlList) els.urlList.hidden = specialMode;
+  if (els.exportOptionsSection) els.exportOptionsSection.hidden = specialMode;
+  if (els.exportFooterSection) els.exportFooterSection.hidden = specialMode;
   if (els.statsView) els.statsView.hidden = !statsMode;
+  if (els.followeesView) els.followeesView.hidden = !followeesMode;
   if (els.dateFilterFieldSelect) {
     els.dateFilterFieldSelect.hidden = !collectionsMode;
     if (!collectionsMode) {
@@ -1179,6 +1209,14 @@ async function loadCacheForActiveTab() {
     els.activeTabText.textContent = state.openPlatform.configured
       ? `${state.openPlatform.mySlug || '当前账号'}（创作数据）`
       : '创作数据需要 Access Secret';
+    return;
+  }
+
+  if (isFolloweesMode()) {
+    els.activeTabText.textContent = state.openPlatform.configured
+      ? `${state.openPlatform.mySlug || '当前账号'}（我的关注）`
+      : '关注列表需要 Access Secret';
+    renderFollowees();
     return;
   }
 
@@ -3871,7 +3909,7 @@ function renderAudienceHtml(audience) {
 
 function renderKpiCards(pairs) {
   return `<div class="stats-kpi-grid">${pairs.map(([label, value]) => (
-    `<div class="stats-kpi-item"><span class="stats-kpi-label">${escapeHtml(label)}</span><strong class="stats-kpi-value">${escapeHtml(Helpers.formatStatValue(value))}</strong></div>`
+    `<div class="stats-kpi"><span class="label">${escapeHtml(label)}</span><strong>${escapeHtml(Helpers.formatStatValue(value))}</strong></div>`
   )).join('')}</div>`;
 }
 
@@ -4070,6 +4108,186 @@ if (els.fillCurrentTabUrlButton) {
 
 if (els.loadSingleStatsButton) {
   els.loadSingleStatsButton.addEventListener('click', loadSingleContentStats);
+}
+
+// ============================
+// Followees Directory (P2)
+// ============================
+function renderFollowees() {
+  if (!els.followeesList) return;
+  const keyword = (els.followeesSearchInput?.value || '').trim().toLowerCase();
+  const list = state.followees || [];
+  const filtered = keyword
+    ? list.filter((u) => (
+      u.fullname.toLowerCase().includes(keyword)
+      || u.urlToken.toLowerCase().includes(keyword)
+      || u.headline.toLowerCase().includes(keyword)
+    ))
+    : list;
+
+  if (els.followeesCountText) {
+    if (!list.length) {
+      els.followeesCountText.textContent = '未加载';
+    } else if (state.followeesTotals != null) {
+      els.followeesCountText.textContent = `已加载 ${list.length} / ${state.followeesTotals}${keyword ? `（匹配 ${filtered.length}）` : ''}`;
+    } else {
+      els.followeesCountText.textContent = `已加载 ${list.length} 人${keyword ? `（匹配 ${filtered.length}）` : ''}`;
+    }
+  }
+  if (els.loadMoreFolloweesButton) {
+    els.loadMoreFolloweesButton.disabled = !list.length || state.followeesIsEnd;
+  }
+  if (els.exportFolloweesButton) {
+    els.exportFolloweesButton.disabled = list.length === 0;
+  }
+
+  if (!list.length) {
+    els.followeesList.innerHTML = '<p class="help-text" style="padding: 8px;">配置 Access Secret 后可加载关注列表，并一键打开某位答主的回答/文章/想法页进行批量导出。</p>';
+    return;
+  }
+  if (!filtered.length) {
+    els.followeesList.innerHTML = '<p class="help-text" style="padding: 8px;">没有匹配的关注创作者。</p>';
+    return;
+  }
+
+  els.followeesList.innerHTML = filtered.map((u) => {
+    const avatarHtml = u.avatarUrl
+      ? `<img class="followee-avatar" src="${escapeHtml(u.avatarUrl)}" alt="" loading="lazy">`
+      : '<div class="followee-avatar" aria-hidden="true"></div>';
+    const token = u.urlToken ? encodeURIComponent(u.urlToken) : '';
+    const followerText = u.followerCount != null ? `${u.followerCount} 粉丝` : '';
+    const actions = token
+      ? `
+        <button type="button" class="followee-link-btn" data-url="https://www.zhihu.com/people/${token}/answers" data-switch="answers">打开回答</button>
+        <button type="button" class="followee-link-btn" data-url="https://www.zhihu.com/people/${token}/posts" data-switch="articles">打开文章</button>
+        <button type="button" class="followee-link-btn" data-url="https://www.zhihu.com/people/${token}/pins" data-switch="pins">打开想法</button>
+      `
+      : (u.url ? `<button type="button" class="followee-link-btn" data-url="${escapeHtml(u.url)}">打开主页</button>` : '');
+
+    return `
+      <div class="followee-card">
+        ${avatarHtml}
+        <div class="followee-meta">
+          <div class="followee-name-row">
+            <strong>${escapeHtml(u.fullname)}</strong>
+            <span class="help-text">${escapeHtml(followerText)}</span>
+          </div>
+          <div class="followee-headline" title="${escapeHtml(u.headline)}">${escapeHtml(u.headline || u.urlToken || '—')}</div>
+          <div class="followee-actions">${actions}</div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+async function fetchFolloweesPage(offset) {
+  const data = await openPlatformRequest('/api/v1/user/followees', {
+    Offset: offset,
+    Limit: 50,
+  });
+  const paging = readPaging(data);
+  const normalized = paging.items.map((item) => Helpers.normalizeFolloweeItem(item));
+  const seenOffsets = new Set(state.followeesSeenOffsets);
+  seenOffsets.add(String(offset));
+  const step = nextPageOffset(paging, offset, seenOffsets);
+
+  const seenTokens = new Set(state.followees.map((u) => u.urlToken || u.url));
+  normalized.forEach((u) => {
+    const key = u.urlToken || u.url;
+    if (!key || seenTokens.has(key)) return;
+    seenTokens.add(key);
+    state.followees.push(u);
+  });
+
+  state.followeesTotals = paging.totals ?? state.followeesTotals;
+  state.followeesSeenOffsets = Array.from(seenOffsets);
+  state.followeesIsEnd = Boolean(step.done || step.error || step.nextOffset == null);
+  state.followeesNextOffset = step.nextOffset || String(offset);
+  if (step.error) throw new Error(step.error);
+}
+
+async function loadFollowees({ reset = false, loadAll = false } = {}) {
+  if (!state.openPlatform.configured) {
+    els.jobStatus.textContent = '关注列表需要配置 Access Secret';
+    return;
+  }
+  if (reset) {
+    state.followees = [];
+    state.followeesNextOffset = '0';
+    state.followeesSeenOffsets = ['0'];
+    state.followeesIsEnd = false;
+    state.followeesTotals = null;
+  }
+
+  els.loadFolloweesButton.disabled = true;
+  if (els.loadMoreFolloweesButton) els.loadMoreFolloweesButton.disabled = true;
+  if (els.loadAllFolloweesButton) els.loadAllFolloweesButton.disabled = true;
+
+  try {
+    let page = 0;
+    do {
+      page += 1;
+      els.jobStatus.textContent = `正在加载关注列表（第 ${page} 页）…`;
+      await fetchFolloweesPage(state.followeesNextOffset);
+      renderFollowees();
+      if (!loadAll || state.followeesIsEnd) break;
+    } while (page < 200);
+    els.jobStatus.textContent = `已加载 ${state.followees.length} 位关注创作者`;
+  } catch (error) {
+    els.jobStatus.textContent = `加载关注失败：${error.message}`;
+  } finally {
+    els.loadFolloweesButton.disabled = false;
+    if (els.loadAllFolloweesButton) els.loadAllFolloweesButton.disabled = false;
+    renderFollowees();
+  }
+}
+
+async function exportFolloweesZip() {
+  if (!state.followees.length) return;
+  const exported = Helpers.formatFolloweesExport(state.followees);
+  const datePart = new Date().toISOString().slice(0, 10);
+  const blob = createZipBlob([
+    { name: 'followees.md', data: exported.markdown },
+    { name: 'followees.csv', data: `\uFEFF${exported.csv}` },
+  ]);
+  await downloadBlob(blob, `zhihu_followees_${datePart}.zip`);
+  els.jobStatus.textContent = '关注列表 ZIP 已下载';
+}
+
+if (els.loadFolloweesButton) {
+  els.loadFolloweesButton.addEventListener('click', () => loadFollowees({ reset: true, loadAll: false }));
+}
+
+if (els.loadMoreFolloweesButton) {
+  els.loadMoreFolloweesButton.addEventListener('click', () => loadFollowees({ reset: false, loadAll: false }));
+}
+
+if (els.loadAllFolloweesButton) {
+  els.loadAllFolloweesButton.addEventListener('click', () => loadFollowees({ reset: true, loadAll: true }));
+}
+
+if (els.exportFolloweesButton) {
+  els.exportFolloweesButton.addEventListener('click', exportFolloweesZip);
+}
+
+if (els.followeesSearchInput) {
+  els.followeesSearchInput.addEventListener('input', renderFollowees);
+}
+
+if (els.followeesList) {
+  els.followeesList.addEventListener('click', async (event) => {
+    const btn = event.target.closest('.followee-link-btn');
+    if (!btn) return;
+    const url = Helpers.sanitizeHttpUrl(btn.dataset.url);
+    if (!url) return;
+    await chrome.tabs.create({ url, active: true });
+    const targetType = btn.dataset.switch;
+    if (targetType && CONTENT_TYPES[targetType]) {
+      setTimeout(() => {
+        switchType(targetType);
+      }, 600);
+    }
+  });
 }
 
 // ============================

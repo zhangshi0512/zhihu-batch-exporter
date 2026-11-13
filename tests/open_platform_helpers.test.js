@@ -192,3 +192,23 @@ test('stats formatting does not zero-fill missing fields or alter raw rate value
   assert.ok(!report.markdown.includes('12%'));
   assert.ok(report.dailyCsv.includes('2026-01-06,1,2,1,,,'));
 });
+
+test('followees normalization and MD/CSV export sanitize URLs and preserve fields', () => {
+  const safe = Helpers.normalizeFolloweeItem({
+    Fullname: '测试|答主',
+    UrlToken: 'test-user',
+    Url: 'https://www.zhihu.com/people/test-user',
+    AvatarUrl: 'javascript:alert(1)',
+    Headline: '一线\n工程师',
+    Gender: 1,
+    FollowerCount: 2560,
+  });
+  assert.equal(safe.avatarUrl, '');
+  assert.equal(safe.url, 'https://www.zhihu.com/people/test-user');
+  assert.equal(safe.followerCount, 2560);
+
+  const exported = Helpers.formatFolloweesExport([safe]);
+  assert.ok(exported.markdown.includes('| 测试\\|答主 | `test-user` | 2560 | 一线 工程师 | [主页](https://www.zhihu.com/people/test-user) |'));
+  assert.ok(exported.csv.includes('Fullname,UrlToken,Url,Headline,Gender,FollowerCount,AvatarUrl'));
+  assert.ok(exported.csv.includes('test-user,https://www.zhihu.com/people/test-user,"一线\n工程师",1,2560,'));
+});

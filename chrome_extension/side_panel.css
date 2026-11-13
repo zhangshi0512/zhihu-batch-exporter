@@ -648,3 +648,72 @@ pre {
   font-size: 11px;
   background: #f8fafc;
 }
+
+.followees-view {
+  display: grid;
+  gap: 8px;
+}
+
+.followees-list {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  max-height: 290px;
+  overflow: auto;
+  background: #fff;
+}
+
+.followee-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px;
+  border-bottom: 1px solid #edf0f4;
+}
+
+.followee-card:last-child {
+  border-bottom: 0;
+}
+
+.followee-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: #eef3fa;
+}
+
+.followee-meta {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.followee-name-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.followee-headline {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.followee-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.followee-link-btn {
+  padding: 2px 6px;
+  font-size: 11px;
+}

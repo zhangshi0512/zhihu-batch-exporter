@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "知乎内容批量导出",
-  "version": "0.4.0",
-  "description": "从知乎采集回答、文章、想法和收藏夹，导出为支持图片本地化的 Markdown ZIP 文件，并支持页面单篇快捷导出。",
+  "version": "0.5.0",
+  "description": "从知乎采集本人或他人回答、文章、想法、视频与收藏夹，支持官方开放平台全文/评论/创作统计/关注列表与图片本地化 ZIP 导出。",
   "action": {
     "default_title": "知乎内容批量导出"
   },
