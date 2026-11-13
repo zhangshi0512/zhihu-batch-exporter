@@ -94,3 +94,101 @@ test('estimateCreationQuota calculates expected calls accurately', () => {
     40
   );
 });
+
+test('formatCommentsMarkdown sanitizes HTML, preserves large IDs, and formats child replies', () => {
+  const md = Helpers.formatCommentsMarkdown([
+    {
+      Comment: {
+        ID: '90071992547409931',
+        Type: 'answer',
+        CreatedAt: 1742822400,
+        Content: '<p>根评论 <script>bad()</script><a href="https://www.zhihu.com/p/1">链接</a></p>',
+        LikeCount: 5,
+        DislikeCount: 1,
+        AuthorToken: 'alice',
+      },
+      Children: [
+        {
+          ID: '90071992547409932',
+          ReplyID: '90071992547409931',
+          RootID: '90071992547409931',
+          CreatedAt: 1742822500,
+          Content: '<p>子回复</p>',
+          LikeCount: 2,
+          AuthorToken: 'bob',
+        },
+      ],
+    },
+  ], { order: 'reverse' });
+
+  assert.ok(md.includes('## 评论区（按时间倒序，共 1 条根评论）'));
+  assert.ok(md.includes('ID:90071992547409931'));
+  assert.ok(md.includes('ID:90071992547409932'));
+  assert.ok(md.includes('回复#90071992547409931'));
+  assert.ok(md.includes('[链接](https://www.zhihu.com/p/1)'));
+  assert.ok(!md.includes('<script>'));
+  assert.ok(md.includes('子评论为接口附带返回，不保证包含全部楼中楼回复'));
+});
+
+test('validateStatsDateRange enforces paired valid YYYY-MM-DD dates', () => {
+  assert.deepEqual(Helpers.validateStatsDateRange('', ''), { ok: true, startDate: '', endDate: '' });
+  assert.equal(Helpers.validateStatsDateRange('2026-01-01', '').ok, false);
+  assert.equal(Helpers.validateStatsDateRange('2026/01/01', '2026-01-05').ok, false);
+  assert.equal(Helpers.validateStatsDateRange('2026-01-10', '2026-01-05').ok, false);
+  assert.deepEqual(Helpers.validateStatsDateRange('2026-01-01', '2026-01-07'), {
+    ok: true,
+    startDate: '2026-01-01',
+    endDate: '2026-01-07',
+  });
+});
+
+test('stats formatting does not zero-fill missing fields or alter raw rate values', () => {
+  assert.equal(Helpers.formatStatValue(null), '—');
+  assert.equal(Helpers.formatStatValue(undefined), '—');
+  assert.equal(Helpers.formatStatValue(0), '0');
+
+  const yamlLines = Helpers.formatContentStatsFrontmatterLines({
+    Date: '2026-01-07',
+    ViewCount: 0,
+    PageShowUV: 1200,
+    ClickRate: 0.085,
+    PositiveInteractionRate: '3.2%',
+    NewFollowerCount: null,
+  });
+  assert.deepEqual(yamlLines, [
+    'stat_date: "2026-01-07"',
+    'view_count: 0',
+    'page_show_uv: 1200',
+    'click_rate: 0.085',
+    'positive_interaction_rate: "3.2%"',
+  ]);
+
+  const csv = Helpers.buildContentStatsCsv([
+    {
+      id: '123',
+      type: 'zhihu-answer',
+      title: '测试, "标题"',
+      url: 'https://www.zhihu.com/answer/123',
+      metrics: { Date: '2026-01-07', ViewCount: 0, ClickRate: 0.085 },
+    },
+  ]);
+  assert.ok(csv.includes('"测试, ""标题"""'));
+  assert.ok(csv.includes(',0.085,'));
+
+  const report = Helpers.buildAccountStatsReport(
+    {
+      ContentType: 'all',
+      CreationCounts: { Answer: 10, Article: 2, Video: 0 },
+      Metrics: { ViewCount: 5000, ClickRate: 0.12 },
+      Followers: { Total: 300, Yesterday: 0 },
+      FollowerDetails: {
+        Daily: [{ Date: '2026-01-06', NetIncrease: 1, NewCount: 2, UnfollowCount: 1 }],
+      },
+    },
+    { ContentType: 'all', StartDate: '2026-01-01', EndDate: '2026-01-07' }
+  );
+  assert.ok(report.markdown.includes('视频：0'));
+  assert.ok(report.markdown.includes('| 点击率 (ClickRate) | 0.12 |'));
+  assert.ok(!report.markdown.includes('12%'));
+  assert.ok(report.dailyCsv.includes('2026-01-06,1,2,1,,,'));
+});

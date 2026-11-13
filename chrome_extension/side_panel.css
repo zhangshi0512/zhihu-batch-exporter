@@ -519,3 +519,132 @@ pre {
   width: 15px;
   height: 15px;
 }
+
+.inline-select-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.inline-select-row select,
+.sub-options select,
+.stats-card select {
+  min-height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.inline-select-row select {
+  flex: 1;
+  min-width: 0;
+}
+
+.sub-options {
+  display: flex;
+  gap: 6px;
+  padding-left: 22px;
+}
+
+.sub-options[hidden],
+.stats-view[hidden],
+[hidden] {
+  display: none !important;
+}
+
+.sub-options select {
+  flex: 1;
+  min-width: 0;
+}
+
+.stats-view {
+  display: grid;
+  gap: 10px;
+}
+
+.stats-card {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 10px;
+}
+
+.stats-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.stats-result {
+  display: grid;
+  gap: 8px;
+}
+
+.stats-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.stats-kpi {
+  border: 1px solid #edf0f4;
+  border-radius: 6px;
+  padding: 7px 8px;
+  background: #fafbfc;
+}
+
+.stats-kpi .label {
+  font-size: 11px;
+}
+
+.stats-kpi strong {
+  display: block;
+  margin-top: 2px;
+  font-size: 14px;
+}
+
+.stats-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.stats-table th,
+.stats-table td {
+  border-bottom: 1px solid #edf0f4;
+  padding: 4px 5px;
+  text-align: left;
+}
+
+.stats-table th {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.stats-section-title {
+  margin: 4px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.audience-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.audience-chip {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-size: 11px;
+  background: #f8fafc;
+}

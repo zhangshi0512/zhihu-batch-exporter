@@ -76,6 +76,7 @@
         <button class="type-btn" data-type="pins">想法</button>
         <button class="type-btn" data-type="zvideos">视频</button>
         <button class="type-btn" data-type="collections">收藏夹</button>
+        <button class="type-btn" data-type="stats">创作数据</button>
       </section>
 
       <section class="favlist-picker" id="officialSortBar" hidden>
@@ -95,9 +96,17 @@
           </select>
           <button type="button" id="refreshFavlistsButton">刷新列表</button>
         </div>
+        <div class="inline-select-row">
+          <span class="help-text">采集源：</span>
+          <select id="favlistSourceSelect" aria-label="收藏夹采集源">
+            <option value="auto">自动（站内优先，失败回退开放平台）</option>
+            <option value="official">仅开放平台（不打开标签页）</option>
+          </select>
+        </div>
+        <p class="help-text" id="favlistDescHint" hidden></p>
       </section>
 
-      <section class="controls">
+      <section class="controls" id="collectControlsSection">
         <div class="button-row">
           <button id="collectButton" class="primary">采集 / 刷新链接</button>
           <button id="hydrateButton" type="button">补全预览</button>
@@ -113,8 +122,14 @@
         </div>
       </section>
 
-      <section class="time-filter">
-        <span class="label">发布时间</span>
+      <section class="time-filter" id="timeFilterSection">
+        <div class="inline-select-row">
+          <span class="label">时间筛选</span>
+          <select id="dateFilterFieldSelect" aria-label="时间筛选字段" hidden>
+            <option value="createdTime">按发布时间</option>
+            <option value="favTime">按收藏时间</option>
+          </select>
+        </div>
         <div class="time-filter-row">
           <input type="date" id="dateFilterFrom" aria-label="起始日期">
           <span class="time-filter-sep">至</span>
@@ -123,7 +138,7 @@
         </div>
       </section>
 
-      <section class="selection-bar">
+      <section class="selection-bar" id="selectionBarSection">
         <div>
           <strong id="selectedCount">已选择 0 条</strong>
           <span id="lastCollectedText"></span>
@@ -137,7 +152,7 @@
 
       <section class="url-list" id="urlList" aria-label="知乎内容链接列表"></section>
 
-      <section class="export-options">
+      <section class="export-options" id="exportOptionsSection">
         <label class="checkbox-option">
           <input type="checkbox" id="downloadImagesCheckbox" checked>
           <span>本地化图片到 ZIP (<code style="font-size: 11px;">images/</code>)</span>
@@ -146,12 +161,80 @@
           <input type="checkbox" id="preferOfficialDetailCheckbox">
           <span>本人内容优先用官方全文 API（免登录，消耗每日额度）</span>
         </label>
+        <label class="checkbox-option">
+          <input type="checkbox" id="includeCommentsCheckbox">
+          <span>本人内容附带导出评论区（消耗每日额度）</span>
+        </label>
+        <div class="sub-options" id="commentOptionsRow" hidden>
+          <select id="commentOrderSelect" aria-label="评论排序">
+            <option value="score">按热度</option>
+            <option value="reverse">按时间倒序</option>
+            <option value="ascending">按时间正序</option>
+          </select>
+          <select id="commentMaxPagesSelect" aria-label="单篇最大评论页数">
+            <option value="1">最多 1 页 (20条)</option>
+            <option value="2" selected>最多 2 页 (40条)</option>
+            <option value="5">最多 5 页 (100条)</option>
+            <option value="0">全量翻页</option>
+          </select>
+        </div>
+        <label class="checkbox-option">
+          <input type="checkbox" id="includeContentStatsCheckbox">
+          <span>本人内容写入单篇统计 &amp; 生成 creator_stats.csv（消耗额度）</span>
+        </label>
       </section>
 
-      <footer class="footer">
+      <footer class="footer" id="exportFooterSection">
         <button id="exportButton" class="primary">下载 ZIP</button>
         <button id="cancelButton">取消</button>
       </footer>
+
+      <section class="stats-view" id="statsView" hidden>
+        <div class="stats-card">
+          <div class="stats-card-header">
+            <strong>账号创作数据</strong>
+            <span class="help-text" id="statsUpdatedText"></span>
+          </div>
+          <div class="inline-select-row">
+            <select id="statsContentTypeSelect" aria-label="统计内容类型">
+              <option value="all">全部类型 (all)</option>
+              <option value="answer">回答 (answer)</option>
+              <option value="article">文章 (article)</option>
+              <option value="pin">想法 (pin)</option>
+              <option value="zvideo">视频 (zvideo)</option>
+            </select>
+          </div>
+          <div class="time-filter-row">
+            <input type="date" id="statsStartDate" aria-label="统计开始日期">
+            <span class="time-filter-sep">至</span>
+            <input type="date" id="statsEndDate" aria-label="统计结束日期">
+            <button type="button" id="clearStatsDateButton">默认</button>
+          </div>
+          <div class="button-row">
+            <button type="button" id="loadAccountStatsButton" class="primary">加载账号统计</button>
+            <button type="button" id="exportStatsReportButton" disabled>导出报表 ZIP</button>
+          </div>
+          <div id="accountStatsResult" class="stats-result">
+            <p class="help-text">配置 Access Secret 后，点击“加载账号统计”查看创作指标、粉丝趋势与受众画像。</p>
+          </div>
+        </div>
+
+        <div class="stats-card">
+          <div class="stats-card-header">
+            <strong>单篇创作数据查询</strong>
+          </div>
+          <div class="path-control">
+            <input type="text" id="singleStatsUrlInput" placeholder="输入本人回答/文章/想法/视频链接">
+            <button type="button" id="fillCurrentTabUrlButton">当前页</button>
+          </div>
+          <div class="button-row">
+            <button type="button" id="loadSingleStatsButton" class="primary">查询单篇统计</button>
+          </div>
+          <div id="singleStatsResult" class="stats-result">
+            <p class="help-text">可查询本人单篇内容的曝光 UV、点击率、完读率、转粉率及单篇受众画像。</p>
+          </div>
+        </div>
+      </section>
 
       <section class="job-panel">
         <div class="job-header">

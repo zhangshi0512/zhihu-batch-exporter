@@ -380,6 +380,236 @@
     return calls;
   }
 
+  function decodeBasicEntities(text) {
+    return String(text || '')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&amp;/gi, '&')
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>')
+      .replace(/&quot;/gi, '"')
+      .replace(/&#39;/gi, "'");
+  }
+
+  function commentHtmlToMarkdownText(html) {
+    const cleaned = sanitizeHtmlFragment(html);
+    if (!cleaned) return '';
+    return decodeBasicEntities(
+      cleaned
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<\/p>\s*<p[^>]*>/gi, '\n')
+        .replace(/<\/?(?:p|div|blockquote)[^>]*>/gi, '\n')
+        .replace(/<a\b[^>]*href=(["'])([^"']+)\1[^>]*>([\s\S]*?)<\/a>/gi, (_m, _q, href, label) => {
+          const text = String(label || '').replace(/<[^>]+>/g, '').trim() || href;
+          return `[${text}](${href})`;
+        })
+        .replace(/<[^>]+>/g, '')
+    )
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
+  function formatUnixSeconds(ts) {
+    if (!ts) return '';
+    const date = new Date(Number(ts) * 1000);
+    if (Number.isNaN(date.getTime())) return '';
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  }
+
+  function formatCommentsMarkdown(items, options = {}) {
+    const list = Array.isArray(items) ? items : [];
+    if (list.length === 0) return '';
+
+    const orderNames = { score: '按热度', reverse: '按时间倒序', ascending: '按时间正序' };
+    const orderText = orderNames[options.order] || options.order || '按热度';
+    const lines = [`## 评论区（${orderText}，共 ${list.length} 条根评论）`, ''];
+
+    let hasChildren = false;
+    list.forEach((entry, idx) => {
+      const root = entry?.Comment || entry?.comment || entry;
+      if (!root) return;
+      const author = String(root.AuthorToken || '匿名用户');
+      const time = formatUnixSeconds(root.CreatedAt);
+      const likes = root.LikeCount != null ? `赞 ${root.LikeCount}` : '';
+      const dislikes = root.DislikeCount ? `踩 ${root.DislikeCount}` : '';
+      const meta = [time, likes, dislikes, root.ID != null ? `ID:${root.ID}` : ''].filter(Boolean).join(' · ');
+      const body = commentHtmlToMarkdownText(root.Content || '') || '（空评论）';
+      const bodyLines = body.split('\n').map((l) => l.trim()).filter(Boolean);
+      lines.push(`${idx + 1}. **${author}**${meta ? ` (${meta})` : ''}`);
+      bodyLines.forEach((l) => lines.push(`   ${l}`));
+
+      const children = Array.isArray(entry?.Children) ? entry.Children : [];
+      if (children.length > 0) {
+        hasChildren = true;
+        children.forEach((child) => {
+          const cAuthor = String(child.AuthorToken || '匿名用户');
+          const cTime = formatUnixSeconds(child.CreatedAt);
+          const cLikes = child.LikeCount != null ? `赞 ${child.LikeCount}` : '';
+          const replyRef = child.ReplyID && String(child.ReplyID) !== '0' ? `回复#${child.ReplyID}` : '';
+          const cMeta = [replyRef, cTime, cLikes, child.ID != null ? `ID:${child.ID}` : ''].filter(Boolean).join(' · ');
+          const cBody = commentHtmlToMarkdownText(child.Content || '') || '（空评论）';
+          lines.push(`   - **${cAuthor}**${cMeta ? ` (${cMeta})` : ''}: ${cBody.replace(/\n+/g, ' ')}`);
+        });
+      }
+      lines.push('');
+    });
+
+    if (hasChildren) {
+      lines.push('> 注：子评论为接口附带返回，不保证包含全部楼中楼回复。', '');
+    }
+    return lines.join('\n');
+  }
+
+  function validateStatsDateRange(startDate, endDate) {
+    const start = String(startDate || '').trim();
+    const end = String(endDate || '').trim();
+    if (!start && !end) return { ok: true, startDate: '', endDate: '' };
+    if (!start || !end) return { ok: false, error: '开始日期和结束日期必须同时填写，或同时留空' };
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+      return { ok: false, error: '日期格式必须为 YYYY-MM-DD' };
+    }
+    if (end < start) return { ok: false, error: '结束日期不得早于开始日期' };
+    return { ok: true, startDate: start, endDate: end };
+  }
+
+  function formatStatValue(value) {
+    if (value === null || value === undefined || value === '') return '—';
+    return String(value);
+  }
+
+  function csvEscape(value) {
+    const str = value == null ? '' : String(value);
+    if (/[",\r\n]/.test(str)) return `"${str.replace(/"/g, '""')}"`;
+    return str;
+  }
+
+  const CONTENT_STAT_FRONTMATTER_KEYS = [
+    ['stat_date', 'Date'],
+    ['view_count', 'ViewCount'],
+    ['play_count', 'PlayCount'],
+    ['page_show_uv', 'PageShowUV'],
+    ['click_rate', 'ClickRate'],
+    ['read_finished_rate', 'ReadFinishedRate'],
+    ['play_finished_rate', 'PlayFinishedRate'],
+    ['new_follower_count', 'NewFollowerCount'],
+    ['follower_gain', 'FollowerGain'],
+    ['follower_conversion_rate', 'FollowerConversionRate'],
+    ['positive_interaction_rate', 'PositiveInteractionRate'],
+    ['upvote_count_7d', 'UpvoteCount7Days'],
+    ['share_count', 'ShareCount'],
+    ['repin_count', 'RepinCount'],
+  ];
+
+  function formatContentStatsFrontmatterLines(metrics) {
+    if (!metrics || typeof metrics !== 'object') return [];
+    const lines = [];
+    for (const [yamlKey, apiKey] of CONTENT_STAT_FRONTMATTER_KEYS) {
+      const val = metrics[apiKey];
+      if (val === undefined || val === null || val === '') continue;
+      if (typeof val === 'number') {
+        lines.push(`${yamlKey}: ${val}`);
+      } else {
+        lines.push(`${yamlKey}: "${String(val).replace(/"/g, '\\"')}"`);
+      }
+    }
+    return lines;
+  }
+
+  function buildContentStatsCsv(rows) {
+    const header = [
+      'id', 'type', 'title', 'url', 'Date', 'ViewCount', 'PlayCount', 'PageShowUV',
+      'ClickRate', 'ReadFinishedRate', 'PlayFinishedRate', 'UpvoteCount', 'CommentCount',
+      'LikeCount', 'CollectCount', 'ShareCount', 'RepinCount',
+      'NewFollowerCount', 'FollowerGain', 'FollowerConversionRate', 'PositiveInteractionRate', 'UpvoteCount7Days',
+    ];
+    const lines = [header.join(',')];
+    (rows || []).forEach((row) => {
+      const m = row.metrics || {};
+      const values = [
+        row.id, row.type, row.title, row.url,
+        m.Date, m.ViewCount, m.PlayCount, m.PageShowUV,
+        m.ClickRate, m.ReadFinishedRate, m.PlayFinishedRate, m.UpvoteCount, m.CommentCount,
+        m.LikeCount, m.CollectCount, m.ShareCount, m.RepinCount,
+        m.NewFollowerCount, m.FollowerGain, m.FollowerConversionRate, m.PositiveInteractionRate, m.UpvoteCount7Days,
+      ];
+      lines.push(values.map(csvEscape).join(','));
+    });
+    return lines.join('\n');
+  }
+
+  function buildAccountStatsReport(data, queryMeta = {}) {
+    const d = data || {};
+    const cc = d.CreationCounts || {};
+    const m = d.Metrics || {};
+    const f = d.Followers || {};
+    const daily = d.FollowerDetails?.Daily || [];
+    const period = d.FollowerDetails?.Period || {};
+
+    const md = [
+      `# 知乎创作者账号数据报告`,
+      '',
+      `- 内容类型：\`${d.ContentType || queryMeta.ContentType || 'all'}\``,
+      queryMeta.StartDate ? `- 统计范围：${queryMeta.StartDate} 至 ${queryMeta.EndDate}` : '- 统计范围：平台默认范围',
+      m.Updated ? `- 数据更新时间：${m.Updated}` : '',
+      '',
+      '## 创作与粉丝概览',
+      '',
+      `- 回答：${formatStatValue(cc.Answer)} | 文章：${formatStatValue(cc.Article)} | 视频：${formatStatValue(cc.Video)} | 粉丝：${formatStatValue(cc.Follower ?? f.Total)}`,
+      `- 昨日净增粉丝：${formatStatValue(f.Yesterday)}（新增 ${formatStatValue(f.NewYesterday)} / 取关 ${formatStatValue(f.CancelledYesterday)}）`,
+      `- 活跃粉丝数：${formatStatValue(f.ActiveCount)} | 活跃粉丝占比：${formatStatValue(f.ActiveRatio)}`,
+      '',
+      '## 核心内容指标',
+      '',
+      '| 指标 | 数值 |',
+      '| :--- | :--- |',
+      ...[
+        ['阅读量 (ViewCount)', m.ViewCount],
+        ['播放量 (PlayCount)', m.PlayCount],
+        ['赞同数 (UpvoteCount)', m.UpvoteCount],
+        ['喜欢数 (LikeCount)', m.LikeCount],
+        ['评论数 (CommentCount)', m.CommentCount],
+        ['收藏数 (CollectCount)', m.CollectCount],
+        ['分享数 (ShareCount)', m.ShareCount],
+        ['转发数 (RepinCount)', m.RepinCount],
+        ['发布内容数 (PublishCount)', m.PublishCount],
+        ['点击率 (ClickRate)', m.ClickRate],
+        ['阅读完成率 (ReadFinishedRate)', m.ReadFinishedRate],
+        ['播放完成率 (PlayFinishedRate)', m.PlayFinishedRate],
+      ]
+        .filter(([, val]) => val !== undefined && val !== null)
+        .map(([label, val]) => `| ${label} | ${val} |`),
+      '',
+    ].filter((line) => line !== undefined && line !== null);
+
+    if (period.Date || period.NetIncrease7Days != null || period.NetIncrease30Days != null) {
+      md.push(
+        '## 周期粉丝趋势',
+        '',
+        '| 周期 | 净增 | 新增 | 取关 | 主页访客 | 主页转粉 | 转粉率 |',
+        '| :--- | :--- | :--- | :--- | :--- | :--- | :--- |',
+        `| 7日 | ${formatStatValue(period.NetIncrease7Days)} | ${formatStatValue(period.NewCount7Days)} | ${formatStatValue(period.UnfollowCount7Days)} | ${formatStatValue(period.HomepageVisitorCount7Days)} | ${formatStatValue(period.HomepageFollowCount7Days)} | ${formatStatValue(period.HomepageConversionRate7Days)} |`,
+        `| 14日 | ${formatStatValue(period.NetIncrease14Days)} | ${formatStatValue(period.NewCount14Days)} | ${formatStatValue(period.UnfollowCount14Days)} | ${formatStatValue(period.HomepageVisitorCount14Days)} | ${formatStatValue(period.HomepageFollowCount14Days)} | ${formatStatValue(period.HomepageConversionRate14Days)} |`,
+        `| 30日 | ${formatStatValue(period.NetIncrease30Days)} | ${formatStatValue(period.NewCount30Days)} | ${formatStatValue(period.UnfollowCount30Days)} | ${formatStatValue(period.HomepageVisitorCount30Days)} | ${formatStatValue(period.HomepageFollowCount30Days)} | ${formatStatValue(period.HomepageConversionRate30Days)} |`,
+        ''
+      );
+    }
+
+    const csvHeader = ['Date', 'NetIncrease', 'NewCount', 'UnfollowCount', 'HomepageVisitorCount', 'HomepageFollowCount', 'HomepageConversionRate'];
+    const csvLines = [csvHeader.join(',')];
+    daily.forEach((row) => {
+      csvLines.push([
+        row.Date, row.NetIncrease, row.NewCount, row.UnfollowCount,
+        row.HomepageVisitorCount, row.HomepageFollowCount, row.HomepageConversionRate,
+      ].map(csvEscape).join(','));
+    });
+
+    return {
+      markdown: md.join('\n'),
+      dailyCsv: csvLines.join('\n'),
+      jsonText: JSON.stringify(d, null, 2),
+    };
+  }
+
   return {
     quoteLargeJsonIntegers,
     parseJsonSafe,
@@ -393,5 +623,13 @@
     sanitizeHtmlFragment,
     normalizeContentDetailResponse,
     estimateCreationQuota,
+    commentHtmlToMarkdownText,
+    formatCommentsMarkdown,
+    validateStatsDateRange,
+    formatStatValue,
+    csvEscape,
+    formatContentStatsFrontmatterLines,
+    buildContentStatsCsv,
+    buildAccountStatsReport,
   };
 });

@@ -330,7 +330,19 @@ const CONTENT_TYPES = {
     urlFilter: (url) => Boolean(url),
     defaultName: '收藏',
   },
+  stats: {
+    label: '创作数据',
+    labelEn: 'stats',
+    folderName: 'stats',
+    frontmatterType: 'zhihu-stats',
+    hasTitle: true,
+    supportsTruncated: false,
+    urlFilter: () => false,
+    defaultName: '创作数据',
+  },
 };
+
+const RECENT_COLLECTIONS_TOKEN = '__recent_collections__';
 
 // ============================
 // DOM element references
@@ -356,16 +368,24 @@ const els = {
   favlistPicker: document.getElementById('favlistPicker'),
   favlistSelect: document.getElementById('favlistSelect'),
   refreshFavlistsButton: document.getElementById('refreshFavlistsButton'),
+  favlistSourceSelect: document.getElementById('favlistSourceSelect'),
+  favlistDescHint: document.getElementById('favlistDescHint'),
+  collectControlsSection: document.getElementById('collectControlsSection'),
   collectButton: document.getElementById('collectButton'),
   hydrateButton: document.getElementById('hydrateButton'),
   collectProgressText: document.getElementById('collectProgressText'),
   collectProgressFill: document.getElementById('collectProgressFill'),
+  timeFilterSection: document.getElementById('timeFilterSection'),
+  dateFilterFieldSelect: document.getElementById('dateFilterFieldSelect'),
+  selectionBarSection: document.getElementById('selectionBarSection'),
   selectedCount: document.getElementById('selectedCount'),
   lastCollectedText: document.getElementById('lastCollectedText'),
   selectAllButton: document.getElementById('selectAllButton'),
   selectNoneButton: document.getElementById('selectNoneButton'),
   clearCacheButton: document.getElementById('clearCacheButton'),
   urlList: document.getElementById('urlList'),
+  exportOptionsSection: document.getElementById('exportOptionsSection'),
+  exportFooterSection: document.getElementById('exportFooterSection'),
   exportButton: document.getElementById('exportButton'),
   cancelButton: document.getElementById('cancelButton'),
   jobStatus: document.getElementById('jobStatus'),
@@ -380,6 +400,24 @@ const els = {
   clearDateFilterButton: document.getElementById('clearDateFilterButton'),
   downloadImagesCheckbox: document.getElementById('downloadImagesCheckbox'),
   preferOfficialDetailCheckbox: document.getElementById('preferOfficialDetailCheckbox'),
+  includeCommentsCheckbox: document.getElementById('includeCommentsCheckbox'),
+  commentOptionsRow: document.getElementById('commentOptionsRow'),
+  commentOrderSelect: document.getElementById('commentOrderSelect'),
+  commentMaxPagesSelect: document.getElementById('commentMaxPagesSelect'),
+  includeContentStatsCheckbox: document.getElementById('includeContentStatsCheckbox'),
+  statsView: document.getElementById('statsView'),
+  statsUpdatedText: document.getElementById('statsUpdatedText'),
+  statsContentTypeSelect: document.getElementById('statsContentTypeSelect'),
+  statsStartDate: document.getElementById('statsStartDate'),
+  statsEndDate: document.getElementById('statsEndDate'),
+  clearStatsDateButton: document.getElementById('clearStatsDateButton'),
+  loadAccountStatsButton: document.getElementById('loadAccountStatsButton'),
+  exportStatsReportButton: document.getElementById('exportStatsReportButton'),
+  accountStatsResult: document.getElementById('accountStatsResult'),
+  singleStatsUrlInput: document.getElementById('singleStatsUrlInput'),
+  fillCurrentTabUrlButton: document.getElementById('fillCurrentTabUrlButton'),
+  loadSingleStatsButton: document.getElementById('loadSingleStatsButton'),
+  singleStatsResult: document.getElementById('singleStatsResult'),
 };
 
 // ============================
@@ -398,9 +436,12 @@ const state = {
   exportAbortController: null,
   dateFilterFrom: '',
   dateFilterTo: '',
+  dateFilterField: 'createdTime',
   openPlatform: { configured: false, masked: '', mySlug: '' },
   favlists: [],
   selectedFavlistToken: '',
+  accountStats: null,
+  accountStatsQuery: null,
 };
 
 function favlistLog(event, details) {
@@ -439,8 +480,12 @@ function isZvideosMode() {
   return state.currentType === 'zvideos';
 }
 
+function isStatsMode() {
+  return state.currentType === 'stats';
+}
+
 function isOfficialMyCreationsMode() {
-  if (isCollectionsMode() || !state.openPlatform.configured) return false;
+  if (isCollectionsMode() || isStatsMode() || !state.openPlatform.configured) return false;
   if (isZvideosMode()) return true;
   if (!state.slug) return true;
   return Boolean(state.openPlatform.mySlug && state.openPlatform.mySlug === state.slug);
@@ -546,11 +591,13 @@ function hasDateFilter() {
 
 function itemMatchesDateFilter(item) {
   if (!hasDateFilter()) return true;
-  if (!item.createdTime) return false;
+  const field = isCollectionsMode() && state.dateFilterField === 'favTime' ? 'favTime' : 'createdTime';
+  const ts = item[field];
+  if (!ts) return false;
   const fromTs = dateInputToStartSeconds(state.dateFilterFrom);
   const toTs = dateInputToEndSeconds(state.dateFilterTo);
-  if (fromTs != null && item.createdTime < fromTs) return false;
-  if (toTs != null && item.createdTime > toTs) return false;
+  if (fromTs != null && ts < fromTs) return false;
+  if (toTs != null && ts > toTs) return false;
   return true;
 }
 
@@ -986,23 +1033,67 @@ async function maybeFillMySlug() {
 }
 
 function syncModeChrome() {
-  if (els.favlistPicker) els.favlistPicker.hidden = !isCollectionsMode();
-  if (els.officialSortBar) els.officialSortBar.hidden = !shouldUseOfficialContents();
-  if (els.collectButton) {
-    els.collectButton.textContent = isCollectionsMode() ? '加载收藏夹内容' : '采集 / 刷新链接';
+  const statsMode = isStatsMode();
+  const collectionsMode = isCollectionsMode();
+  if (els.favlistPicker) els.favlistPicker.hidden = !collectionsMode || statsMode;
+  if (els.officialSortBar) els.officialSortBar.hidden = statsMode || !shouldUseOfficialContents();
+  if (els.collectControlsSection) els.collectControlsSection.hidden = statsMode;
+  if (els.timeFilterSection) els.timeFilterSection.hidden = statsMode;
+  if (els.selectionBarSection) els.selectionBarSection.hidden = statsMode;
+  if (els.urlList) els.urlList.hidden = statsMode;
+  if (els.exportOptionsSection) els.exportOptionsSection.hidden = statsMode;
+  if (els.exportFooterSection) els.exportFooterSection.hidden = statsMode;
+  if (els.statsView) els.statsView.hidden = !statsMode;
+  if (els.dateFilterFieldSelect) {
+    els.dateFilterFieldSelect.hidden = !collectionsMode;
+    if (!collectionsMode) {
+      state.dateFilterField = 'createdTime';
+      els.dateFilterFieldSelect.value = 'createdTime';
+    }
   }
+  if (els.collectButton) {
+    els.collectButton.textContent = collectionsMode ? '加载收藏夹内容' : '采集 / 刷新链接';
+  }
+}
+
+function updateFavlistDescHint() {
+  if (!els.favlistDescHint) return;
+  if (!isCollectionsMode() || !state.selectedFavlistToken) {
+    els.favlistDescHint.hidden = true;
+    els.favlistDescHint.textContent = '';
+    return;
+  }
+  if (state.selectedFavlistToken === RECENT_COLLECTIONS_TOKEN) {
+    els.favlistDescHint.textContent = '调用 /api/v1/user/collections 获取近期公开收藏（单次最多返回近期一批，无分页）。';
+    els.favlistDescHint.hidden = false;
+    return;
+  }
+  const folder = state.favlists.find((f) => String(f.urlToken) === String(state.selectedFavlistToken));
+  if (!folder) {
+    els.favlistDescHint.hidden = true;
+    return;
+  }
+  const visibility = folder.isPublic ? '公开收藏夹' : '私密收藏夹';
+  const desc = folder.description ? ` · ${folder.description}` : '';
+  els.favlistDescHint.textContent = `${visibility}${desc}`;
+  els.favlistDescHint.hidden = false;
 }
 
 function renderFavlistSelect() {
   if (!els.favlistSelect) return;
-  const options = ['<option value="">选择一个收藏夹</option>']
-    .concat(state.favlists.map((folder) => {
-      const token = String(folder.urlToken || '');
-      const title = folder.title || `收藏夹 ${token}`;
-      const selected = token && token === String(state.selectedFavlistToken) ? ' selected' : '';
-      return `<option value="${escapeHtml(token)}"${selected}>${escapeHtml(title)}</option>`;
-    }));
+  const recentSelected = state.selectedFavlistToken === RECENT_COLLECTIONS_TOKEN ? ' selected' : '';
+  const options = [
+    '<option value="">选择一个收藏夹</option>',
+    `<option value="${RECENT_COLLECTIONS_TOKEN}"${recentSelected}>★ 近期收藏（跨收藏夹最近内容）</option>`,
+  ].concat(state.favlists.map((folder) => {
+    const token = String(folder.urlToken || '');
+    const badge = folder.isPublic ? '[公开]' : '[私密]';
+    const title = `${badge} ${folder.title || `收藏夹 ${token}`}`;
+    const selected = token && token === String(state.selectedFavlistToken) ? ' selected' : '';
+    return `<option value="${escapeHtml(token)}"${selected}>${escapeHtml(title)}</option>`;
+  }));
   els.favlistSelect.innerHTML = options.join('');
+  updateFavlistDescHint();
 }
 
 async function persistCurrentItems() {
@@ -1069,7 +1160,11 @@ async function loadFavlistCache() {
   if (!state.selectedFavlistToken && cached.lastToken) {
     state.selectedFavlistToken = String(cached.lastToken);
   }
-  if (state.selectedFavlistToken && !state.favlists.some((folder) => String(folder.urlToken) === String(state.selectedFavlistToken))) {
+  if (
+    state.selectedFavlistToken
+    && state.selectedFavlistToken !== RECENT_COLLECTIONS_TOKEN
+    && !state.favlists.some((folder) => String(folder.urlToken) === String(state.selectedFavlistToken))
+  ) {
     state.selectedFavlistToken = state.favlists[0] ? String(state.favlists[0].urlToken) : '';
   }
   renderFavlistSelect();
@@ -1079,6 +1174,13 @@ async function loadCacheForActiveTab() {
   state.tab = await getActiveTab();
   state.slug = getSlugFromUrl(state.tab?.url || '');
   syncModeChrome();
+
+  if (isStatsMode()) {
+    els.activeTabText.textContent = state.openPlatform.configured
+      ? `${state.openPlatform.mySlug || '当前账号'}（创作数据）`
+      : '创作数据需要 Access Secret';
+    return;
+  }
 
   if (isCollectionsMode()) {
     els.activeTabText.textContent = state.openPlatform.configured
@@ -2272,6 +2374,35 @@ async function collectSiteFavlistContents(folder, extra) {
   return { items: [], remoteTotal: 0 };
 }
 
+async function collectRecentCollectionsContents() {
+  if (!state.openPlatform.configured) {
+    throw new Error('近期收藏接口需要配置 Access Secret。');
+  }
+  const data = await openPlatformRequest('/api/v1/user/collections', { Limit: 20 });
+  const rawItems = Array.isArray(data?.Items) ? data.Items : (Array.isArray(data?.items) ? data.items : []);
+  const items = [];
+  const seen = new Set();
+  rawItems.forEach((item, index) => {
+    const folderNames = Array.isArray(item?.Favlists)
+      ? item.Favlists.map((f) => f?.Title).filter(Boolean)
+      : [];
+    const local = officialItemToLocal(item, {
+      favlistTitle: folderNames.join(' / ') || '近期收藏',
+      favlistUrlToken: item?.Favlists?.[0]?.UrlToken || RECENT_COLLECTIONS_TOKEN,
+      author: item?.Author?.Name || '',
+    });
+    if (!local.url) {
+      local.url = `zhihu:unresolved/${RECENT_COLLECTIONS_TOKEN}/${index}`;
+      local.unsupportedReason = local.unsupportedReason || '缺少内容链接';
+    }
+    const key = itemMergeKey(local);
+    if (seen.has(key)) return;
+    seen.add(key);
+    items.push(local);
+  });
+  return { items, remoteTotal: items.length };
+}
+
 async function collectFavlistContents() {
   if (!state.selectedFavlistToken) {
     const count = await collectFavlists();
@@ -2283,6 +2414,22 @@ async function collectFavlistContents() {
     return;
   }
 
+  if (state.selectedFavlistToken === RECENT_COLLECTIONS_TOKEN) {
+    setProgress(els.collectProgressFill, els.collectProgressText, 20, '正在获取近期收藏…');
+    const collected = await collectRecentCollectionsContents();
+    await storageSet({
+      [favlistsCacheKey()]: {
+        items: state.favlists,
+        lastToken: state.selectedFavlistToken,
+        lastCollectedAt: new Date().toISOString(),
+      },
+    });
+    const { added, removed } = await applyCollectedItems(collected.items, collected.remoteTotal, { authoritative: true });
+    els.lastCollectedText.textContent = `近期收藏（开放平台）新增 ${added} 条${removed ? `，清理 ${removed} 条旧缓存` : ''}，${formatTime(state.lastCollectedAt)}`;
+    setProgress(els.collectProgressFill, els.collectProgressText, 100, `已缓存 ${state.urls.length} 条`);
+    return;
+  }
+
   const folder = state.favlists.find((entry) => String(entry.urlToken) === String(state.selectedFavlistToken));
   const extra = {
     favlistTitle: folder?.title || '',
@@ -2290,31 +2437,42 @@ async function collectFavlistContents() {
   };
   const previousRunId = state.collectRunId;
   state.collectRunId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const prefSource = els.favlistSourceSelect?.value || 'auto';
   favlistLog('collect-start', {
     runId: state.collectRunId,
     selectedFavlistToken: state.selectedFavlistToken,
+    prefSource,
     folder,
     inspectHint: 'Filter Console with ZhihuExporter. Side panel logs appear here; page-injection logs appear in the Zhihu tab DevTools.',
   });
 
   try {
-    setProgress(els.collectProgressFill, els.collectProgressText, 0, '正在用站内接口翻页…');
     let source = 'site-favlist';
     let collected = { items: [], remoteTotal: 0 };
     let siteWarning = '';
 
-    try {
-      collected = await collectSiteFavlistContents(folder, extra);
-    } catch (error) {
-      siteWarning = error.message;
-      favlistLog('site-error', { message: error.message, stack: error.stack || '' });
-    }
-
-    if (!collected.items.length) {
-      favlistLog('fallback-official', { siteWarning, siteDebug: collected.debug || null });
-      setProgress(els.collectProgressFill, els.collectProgressText, 0, '站内接口无结果，改用开放平台…');
+    if (prefSource === 'official') {
+      if (!state.openPlatform.configured) {
+        throw new Error('仅官方模式需要配置 Access Secret。');
+      }
+      setProgress(els.collectProgressFill, els.collectProgressText, 0, '正在用开放平台接口翻页…');
       collected = await collectOfficialFavlistContents(folder, extra);
       source = 'official-favlist';
+    } else {
+      setProgress(els.collectProgressFill, els.collectProgressText, 0, '正在用站内接口翻页…');
+      try {
+        collected = await collectSiteFavlistContents(folder, extra);
+      } catch (error) {
+        siteWarning = error.message;
+        favlistLog('site-error', { message: error.message, stack: error.stack || '' });
+      }
+
+      if (!collected.items.length) {
+        favlistLog('fallback-official', { siteWarning, siteDebug: collected.debug || null });
+        setProgress(els.collectProgressFill, els.collectProgressText, 0, '站内接口无结果，改用开放平台…');
+        collected = await collectOfficialFavlistContents(folder, extra);
+        source = 'official-favlist';
+      }
     }
 
     await storageSet({
@@ -2826,8 +2984,14 @@ function buildMarkdown(data, type = state.currentType) {
   ]) {
     lines.push(`${key}: ${data[field] == null ? 'null' : Number(data[field])}`);
   }
+  if (data.contentStats) {
+    lines.push(...Helpers.formatContentStatsFrontmatterLines(data.contentStats));
+  }
   lines.push(`downloaded: "${new Date().toISOString().slice(0, 10)}"`, '---', '');
   lines.push(`# ${data.title}`, '', htmlToMarkdown(data.html), '');
+  if (data.commentsMarkdown) {
+    lines.push(data.commentsMarkdown);
+  }
   return lines.join('\n');
 }
 
@@ -3041,6 +3205,63 @@ async function fetchOfficialContentDetail(item, exportType) {
   return normalized;
 }
 
+async function fetchOfficialContentComments(contentUrl, order = 'score', maxPages = 2) {
+  const limit = 20;
+  let offset = '0';
+  const items = [];
+  const seenOffsets = new Set([offset]);
+  let page = 0;
+  let calls = 0;
+
+  while (maxPages === 0 || page < maxPages) {
+    if (page >= 500) break;
+    page += 1;
+    calls += 1;
+    const result = await openPlatformRequestRaw('/api/v1/user/content_comments', {
+      ContentUrl: contentUrl,
+      Offset: offset,
+      Limit: limit,
+      Order: order,
+    }, 'GET', { preserveLargeInts: true });
+    if (!result.ok) {
+      const err = new Error(result.error || '官方评论接口请求失败');
+      err.code = result.code;
+      err.fatal = isFatalOpenPlatformCode(result.code);
+      err.calls = calls;
+      throw err;
+    }
+    const paging = readPaging(result.data);
+    items.push(...paging.items);
+    const step = nextPageOffset(paging, offset, seenOffsets);
+    if (step.error) {
+      const err = new Error(step.error);
+      err.fatal = false;
+      err.calls = calls;
+      throw err;
+    }
+    if (step.done || step.nextOffset == null) break;
+    offset = step.nextOffset;
+    seenOffsets.add(offset);
+  }
+  return { items, calls };
+}
+
+async function fetchOfficialContentStats(contentUrl, dateRange = {}) {
+  const query = { ContentUrl: contentUrl };
+  if (dateRange.startDate && dateRange.endDate) {
+    query.StartDate = dateRange.startDate;
+    query.EndDate = dateRange.endDate;
+  }
+  const result = await openPlatformRequestRaw('/api/v1/user/creator_content_stats', query);
+  if (!result.ok) {
+    const err = new Error(result.error || '官方单篇统计接口请求失败');
+    err.code = result.code;
+    err.fatal = isFatalOpenPlatformCode(result.code);
+    throw err;
+  }
+  return result.data || {};
+}
+
 function buildContentFromCachedPin(item, pinId) {
   return {
     id: pinId,
@@ -3082,6 +3303,10 @@ async function exportSelectedZip() {
   if (items.length === 0) return;
 
   const preferOfficialDetail = Boolean(els.preferOfficialDetailCheckbox?.checked && state.openPlatform.configured);
+  const includeComments = Boolean(els.includeCommentsCheckbox?.checked && state.openPlatform.configured);
+  const includeContentStats = Boolean(els.includeContentStatsCheckbox?.checked && state.openPlatform.configured);
+  const commentOrder = els.commentOrderSelect?.value || 'score';
+  const commentMaxPages = Number(els.commentMaxPagesSelect?.value ?? 2) || 0;
   const isMyContext = isOfficialMyCreationsMode();
   const allVideos = items.every((item) => (item.exportType || inferExportType(item.url, item.officialContentType)) === 'zvideos');
   const cookie = await checkCookie();
@@ -3101,6 +3326,7 @@ async function exportSelectedZip() {
 
   const files = [];
   const failures = [];
+  const contentStatsRows = [];
   const downloadImages = els.downloadImagesCheckbox ? els.downloadImagesCheckbox.checked : true;
   const ownerLabel = state.slug || state.openPlatform.mySlug || 'export';
   const zipLabel = isCollectionsMode()
@@ -3110,8 +3336,14 @@ async function exportSelectedZip() {
   let officialDetailHalted = false;
   let officialDetailCalls = 0;
 
-  if (state.openPlatform.configured && isMyContext && (preferOfficialDetail || allVideos)) {
-    const est = Helpers.estimateCreationQuota({ itemCount: items.length, useContentDetail: true });
+  if (state.openPlatform.configured && isMyContext && (preferOfficialDetail || allVideos || includeComments || includeContentStats)) {
+    const est = Helpers.estimateCreationQuota({
+      itemCount: items.length,
+      useContentDetail: preferOfficialDetail || allVideos,
+      includeComments,
+      maxCommentPages: commentMaxPages || 2,
+      includeContentStats,
+    });
     appendLog(`提示：本次预计最多消耗约 ${est} 次开放平台“创作能力”额度。`);
   }
 
@@ -3199,6 +3431,43 @@ async function exportSelectedZip() {
             }
           }
 
+          if (isMyContext && state.openPlatform.configured && !officialDetailHalted && includeComments) {
+            try {
+              appendLog(`  └─ 正在拉取官方评论区（${commentOrder}）...`);
+              const commentRes = await fetchOfficialContentComments(content.url || item.url, commentOrder, commentMaxPages);
+              officialDetailCalls += commentRes.calls || 0;
+              if (commentRes.items.length) {
+                content.commentsMarkdown = Helpers.formatCommentsMarkdown(commentRes.items, { order: commentOrder });
+              }
+            } catch (commentErr) {
+              officialDetailCalls += commentErr?.calls || 1;
+              if (commentErr?.fatal) officialDetailHalted = true;
+              appendLog(`  └─ 评论拉取跳过：${commentErr.message}`);
+            }
+          }
+
+          if (isMyContext && state.openPlatform.configured && !officialDetailHalted && includeContentStats) {
+            try {
+              appendLog(`  └─ 正在拉取单篇创作统计...`);
+              officialDetailCalls += 1;
+              const statsData = await fetchOfficialContentStats(content.url || item.url);
+              const metrics = extractSingleStatsMetrics(statsData);
+              if (metrics) {
+                content.contentStats = metrics;
+                contentStatsRows.push({
+                  id: content.id,
+                  type: config.frontmatterType,
+                  title: content.title,
+                  url: content.url,
+                  metrics,
+                });
+              }
+            } catch (statsErr) {
+              if (statsErr?.fatal) officialDetailHalted = true;
+              appendLog(`  └─ 单篇统计跳过：${statsErr.message}`);
+            }
+          }
+
           await processItemMarkdownAndImages(content, config, files, downloadImages, state.exportAbortController.signal, appendLog, exportType);
           appendLog(`已加入：${content.title}`);
         } catch (error) {
@@ -3214,6 +3483,12 @@ async function exportSelectedZip() {
       setProgress(els.exportProgressFill, els.exportProgressText, percent, `${completed} / ${items.length}`);
     }
 
+    if (contentStatsRows.length) {
+      files.push({
+        name: 'creator_stats.csv',
+        data: `\uFEFF${Helpers.buildContentStatsCsv(contentStatsRows)}`,
+      });
+    }
     if (failures.length) {
       files.push({
         name: 'failed_urls.txt',
@@ -3222,7 +3497,7 @@ async function exportSelectedZip() {
     }
     if (files.length === 0) throw new Error('没有生成任何 Markdown 文件。');
 
-    appendLog(`正在打包 ZIP...${officialDetailCalls ? `（本次共调用官方全文 API ${officialDetailCalls} 次）` : ''}`);
+    appendLog(`正在打包 ZIP...${officialDetailCalls ? `（本次共调用开放平台创作能力 API ${officialDetailCalls} 次）` : ''}`);
     const zipBlob = createZipBlob(files);
     const datePart = new Date().toISOString().slice(0, 10);
     const filename = `zhihu_${zipLabel}_${datePart}.zip`;
@@ -3521,6 +3796,7 @@ if (els.refreshFavlistsButton) {
 if (els.favlistSelect) {
   els.favlistSelect.addEventListener('change', async () => {
     state.selectedFavlistToken = els.favlistSelect.value || '';
+    updateFavlistDescHint();
     await storageSet({
       [favlistsCacheKey()]: {
         items: state.favlists,
@@ -3531,6 +3807,271 @@ if (els.favlistSelect) {
   });
 }
 
+if (els.dateFilterFieldSelect) {
+  els.dateFilterFieldSelect.addEventListener('change', () => {
+    state.dateFilterField = els.dateFilterFieldSelect.value || 'createdTime';
+    renderUrls();
+  });
+}
+
+if (els.includeCommentsCheckbox) {
+  els.includeCommentsCheckbox.addEventListener('change', () => {
+    if (els.commentOptionsRow) {
+      els.commentOptionsRow.hidden = !els.includeCommentsCheckbox.checked;
+    }
+  });
+}
+
+// ============================
+// Creator Stats Dashboard (P1)
+// ============================
+function extractSingleStatsEntry(data) {
+  if (!data || typeof data !== 'object') return null;
+  if (Array.isArray(data.Items)) {
+    return data.Items[0] || null;
+  }
+  return data;
+}
+
+function extractSingleStatsMetrics(data) {
+  const entry = extractSingleStatsEntry(data);
+  if (!entry || typeof entry !== 'object') return null;
+  const candidate = entry.Metrics && typeof entry.Metrics === 'object' ? entry.Metrics : entry;
+  const hasAny = Object.values(candidate).some((v) => v !== null && v !== undefined && v !== '' && typeof v !== 'object');
+  return hasAny ? candidate : null;
+}
+
+function renderAudienceHtml(audience) {
+  if (!audience || typeof audience !== 'object') return '';
+  const statusText = audience.Status || audience.Reason
+    ? `<p class="help-text">受众画像状态：${escapeHtml(audience.Status || '')} ${escapeHtml(audience.Reason || '')}</p>`
+    : '';
+  const sections = [];
+  for (const [key, label] of [
+    ['Gender', '性别分布'],
+    ['Age', '年龄分布'],
+    ['City', '城市分布'],
+    ['Province', '省份分布'],
+    ['FansType', '粉丝属性'],
+    ['Device', '设备分布'],
+  ]) {
+    const entries = audience[key];
+    if (Array.isArray(entries) && entries.length) {
+      const chips = entries.slice(0, 8).map((item) => {
+        const name = item?.Name || item?.Label || item?.Key || '—';
+        const val = item?.Ratio ?? item?.Percent ?? item?.Rate ?? item?.Value ?? item?.Count ?? '';
+        return `<span class="audience-chip">${escapeHtml(String(name))}${val !== '' && val != null ? ` ${escapeHtml(String(val))}` : ''}</span>`;
+      }).join('');
+      sections.push(`<div class="audience-group"><strong>${label}</strong><div class="audience-chips">${chips}</div></div>`);
+    }
+  }
+  if (!statusText && !sections.length) return '';
+  return `<div class="audience-block">${statusText}${sections.join('')}</div>`;
+}
+
+function renderKpiCards(pairs) {
+  return `<div class="stats-kpi-grid">${pairs.map(([label, value]) => (
+    `<div class="stats-kpi-item"><span class="stats-kpi-label">${escapeHtml(label)}</span><strong class="stats-kpi-value">${escapeHtml(Helpers.formatStatValue(value))}</strong></div>`
+  )).join('')}</div>`;
+}
+
+function renderAccountStats(data, queryMeta = {}) {
+  if (!els.accountStatsResult) return;
+  if (!data) {
+    els.accountStatsResult.innerHTML = '<p class="help-text">暂无统计数据。</p>';
+    return;
+  }
+  const m = data.Metrics || {};
+  const cc = data.CreationCounts || {};
+  const f = data.Followers || {};
+  const daily = Array.isArray(data.FollowerDetails?.Daily) ? data.FollowerDetails.Daily : [];
+  const period = data.FollowerDetails?.Period || {};
+  if (els.statsUpdatedText) {
+    els.statsUpdatedText.textContent = m.Updated ? `更新：${m.Updated}` : `类型：${data.ContentType || queryMeta.ContentType || 'all'}`;
+  }
+
+  const parts = [];
+  parts.push(renderKpiCards([
+    ['回答', cc.Answer],
+    ['文章', cc.Article],
+    ['视频', cc.Video],
+    ['总粉丝', cc.Follower ?? f.Total],
+    ['昨日净增粉丝', f.Yesterday],
+    ['活跃粉丝', f.ActiveCount],
+    ['阅读量', m.ViewCount],
+    ['播放量', m.PlayCount],
+    ['赞同数', m.UpvoteCount],
+    ['喜欢数', m.LikeCount],
+    ['评论数', m.CommentCount],
+    ['收藏数', m.CollectCount],
+    ['分享数', m.ShareCount],
+    ['点击率 (原值)', m.ClickRate],
+    ['阅读完成率', m.ReadFinishedRate],
+    ['播放完成率', m.PlayFinishedRate],
+  ]));
+
+  if (period.Date || period.NetIncrease7Days != null || period.NetIncrease30Days != null) {
+    parts.push(`
+      <table class="stats-table">
+        <thead><tr><th>周期</th><th>净增</th><th>新增</th><th>取关</th><th>访客</th><th>转粉率</th></tr></thead>
+        <tbody>
+          <tr><td>7日</td><td>${escapeHtml(Helpers.formatStatValue(period.NetIncrease7Days))}</td><td>${escapeHtml(Helpers.formatStatValue(period.NewCount7Days))}</td><td>${escapeHtml(Helpers.formatStatValue(period.UnfollowCount7Days))}</td><td>${escapeHtml(Helpers.formatStatValue(period.HomepageVisitorCount7Days))}</td><td>${escapeHtml(Helpers.formatStatValue(period.HomepageConversionRate7Days))}</td></tr>
+          <tr><td>14日</td><td>${escapeHtml(Helpers.formatStatValue(period.NetIncrease14Days))}</td><td>${escapeHtml(Helpers.formatStatValue(period.NewCount14Days))}</td><td>${escapeHtml(Helpers.formatStatValue(period.UnfollowCount14Days))}</td><td>${escapeHtml(Helpers.formatStatValue(period.HomepageVisitorCount14Days))}</td><td>${escapeHtml(Helpers.formatStatValue(period.HomepageConversionRate14Days))}</td></tr>
+          <tr><td>30日</td><td>${escapeHtml(Helpers.formatStatValue(period.NetIncrease30Days))}</td><td>${escapeHtml(Helpers.formatStatValue(period.NewCount30Days))}</td><td>${escapeHtml(Helpers.formatStatValue(period.UnfollowCount30Days))}</td><td>${escapeHtml(Helpers.formatStatValue(period.HomepageVisitorCount30Days))}</td><td>${escapeHtml(Helpers.formatStatValue(period.HomepageConversionRate30Days))}</td></tr>
+        </tbody>
+      </table>
+    `);
+  }
+
+  if (daily.length) {
+    const recent = daily.slice(-7).reverse();
+    parts.push(`
+      <table class="stats-table">
+        <thead><tr><th>日期</th><th>净增</th><th>新增</th><th>取关</th><th>主页访客</th></tr></thead>
+        <tbody>${recent.map((row) => (
+          `<tr><td>${escapeHtml(Helpers.formatStatValue(row.Date))}</td><td>${escapeHtml(Helpers.formatStatValue(row.NetIncrease))}</td><td>${escapeHtml(Helpers.formatStatValue(row.NewCount))}</td><td>${escapeHtml(Helpers.formatStatValue(row.UnfollowCount))}</td><td>${escapeHtml(Helpers.formatStatValue(row.HomepageVisitorCount))}</td></tr>`
+        )).join('')}</tbody>
+      </table>
+    `);
+  }
+
+  parts.push(renderAudienceHtml(data.Audience));
+  els.accountStatsResult.innerHTML = parts.filter(Boolean).join('');
+}
+
+function renderSingleContentStats(data) {
+  if (!els.singleStatsResult) return;
+  const entry = extractSingleStatsEntry(data);
+  const metrics = extractSingleStatsMetrics(data);
+  if (!entry && !metrics) {
+    els.singleStatsResult.innerHTML = '<p class="help-text">接口返回空列表：可能该内容暂无统计明细，或不代表所有指标为 0。</p>';
+    return;
+  }
+  const m = metrics || {};
+  const audienceHtml = renderAudienceHtml(entry?.Audience || data?.Audience);
+  els.singleStatsResult.innerHTML = [
+    entry?.Date || m.Date ? `<p class="help-text">统计日期：${escapeHtml(String(entry?.Date || m.Date))}</p>` : '',
+    renderKpiCards([
+      ['阅读量', m.ViewCount],
+      ['播放量', m.PlayCount],
+      ['曝光 UV', m.PageShowUV],
+      ['点击率', m.ClickRate],
+      ['阅读完成率', m.ReadFinishedRate],
+      ['播放完成率', m.PlayFinishedRate],
+      ['新增关注', m.NewFollowerCount],
+      ['净增关注', m.FollowerGain],
+      ['转粉率', m.FollowerConversionRate],
+      ['正向互动率', m.PositiveInteractionRate],
+      ['7日赞同', m.UpvoteCount7Days],
+      ['赞同数', m.UpvoteCount],
+      ['评论数', m.CommentCount],
+      ['收藏数', m.CollectCount],
+    ]),
+    audienceHtml,
+  ].filter(Boolean).join('');
+}
+
+async function loadAccountStats() {
+  if (!state.openPlatform.configured) {
+    els.accountStatsResult.innerHTML = '<p class="help-text">请先配置 Access Secret。</p>';
+    return;
+  }
+  const range = Helpers.validateStatsDateRange(els.statsStartDate?.value, els.statsEndDate?.value);
+  if (!range.ok) {
+    els.accountStatsResult.innerHTML = `<p class="help-text">${escapeHtml(range.error)}</p>`;
+    return;
+  }
+  const contentType = els.statsContentTypeSelect?.value || 'all';
+  const query = { ContentType: contentType };
+  if (range.startDate && range.endDate) {
+    query.StartDate = range.startDate;
+    query.EndDate = range.endDate;
+  }
+
+  els.loadAccountStatsButton.disabled = true;
+  els.accountStatsResult.innerHTML = '<p class="help-text">正在请求开放平台账号统计…</p>';
+  try {
+    const data = await openPlatformRequest('/api/v1/user/creator_account_stats', query);
+    state.accountStats = data;
+    state.accountStatsQuery = query;
+    renderAccountStats(data, query);
+    if (els.exportStatsReportButton) els.exportStatsReportButton.disabled = false;
+  } catch (error) {
+    els.accountStatsResult.innerHTML = `<p class="help-text">加载失败：${escapeHtml(error.message)}</p>`;
+  } finally {
+    els.loadAccountStatsButton.disabled = false;
+  }
+}
+
+async function exportStatsReportZip() {
+  if (!state.accountStats) return;
+  const report = Helpers.buildAccountStatsReport(state.accountStats, state.accountStatsQuery || {});
+  const datePart = new Date().toISOString().slice(0, 10);
+  const files = [
+    { name: 'creator_account_stats.md', data: report.markdown },
+    { name: 'follower_daily.csv', data: `\uFEFF${report.dailyCsv}` },
+    { name: 'creator_account_stats.json', data: report.jsonText },
+  ];
+  const blob = createZipBlob(files);
+  await downloadBlob(blob, `zhihu_creator_stats_${datePart}.zip`);
+  els.jobStatus.textContent = '统计报表 ZIP 已下载';
+}
+
+async function loadSingleContentStats() {
+  if (!state.openPlatform.configured) {
+    els.singleStatsResult.innerHTML = '<p class="help-text">请先配置 Access Secret。</p>';
+    return;
+  }
+  const rawUrl = els.singleStatsUrlInput?.value?.trim() || '';
+  if (!rawUrl) {
+    els.singleStatsResult.innerHTML = '<p class="help-text">请输入本人创作内容的知乎链接。</p>';
+    return;
+  }
+  const range = Helpers.validateStatsDateRange(els.statsStartDate?.value, els.statsEndDate?.value);
+  if (!range.ok) {
+    els.singleStatsResult.innerHTML = `<p class="help-text">${escapeHtml(range.error)}</p>`;
+    return;
+  }
+  els.loadSingleStatsButton.disabled = true;
+  els.singleStatsResult.innerHTML = '<p class="help-text">正在查询单篇创作统计…</p>';
+  try {
+    const data = await fetchOfficialContentStats(Helpers.stripTrackingParams(rawUrl), range);
+    renderSingleContentStats(data);
+  } catch (error) {
+    els.singleStatsResult.innerHTML = `<p class="help-text">查询失败：${escapeHtml(error.message)}</p>`;
+  } finally {
+    els.loadSingleStatsButton.disabled = false;
+  }
+}
+
+if (els.clearStatsDateButton) {
+  els.clearStatsDateButton.addEventListener('click', () => {
+    if (els.statsStartDate) els.statsStartDate.value = '';
+    if (els.statsEndDate) els.statsEndDate.value = '';
+  });
+}
+
+if (els.loadAccountStatsButton) {
+  els.loadAccountStatsButton.addEventListener('click', loadAccountStats);
+}
+
+if (els.exportStatsReportButton) {
+  els.exportStatsReportButton.addEventListener('click', exportStatsReportZip);
+}
+
+if (els.fillCurrentTabUrlButton) {
+  els.fillCurrentTabUrlButton.addEventListener('click', async () => {
+    await refreshActiveTab();
+    if (els.singleStatsUrlInput && state.tab?.url) {
+      els.singleStatsUrlInput.value = Helpers.stripTrackingParams(state.tab.url);
+    }
+  });
+}
+
+if (els.loadSingleStatsButton) {
+  els.loadSingleStatsButton.addEventListener('click', loadSingleContentStats);
+}
+
 // ============================
 // Initialization
 // ============================
@@ -3539,6 +4080,9 @@ if (els.favlistSelect) {
   els.jobStatus.textContent = '当前没有导出任务';
   els.cancelButton.disabled = true;
   setExportProgressVisible(false);
+  if (els.commentOptionsRow && els.includeCommentsCheckbox) {
+    els.commentOptionsRow.hidden = !els.includeCommentsCheckbox.checked;
+  }
   syncDateFilterInputs();
   syncModeChrome();
   await refreshOpenPlatformStatus();
